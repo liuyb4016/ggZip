@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QDragEnterEvent>
+#include <QFile>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -43,6 +44,15 @@ const wchar_t* kFilter =
 bool isImageFile(const QString& name) {
     static const QStringList kExt = { "png", "jpg", "jpeg", "gif",
                                       "bmp", "webp", "ico" };
+    return kExt.contains(QFileInfo(name).suffix().toLower());
+}
+
+bool isTextFile(const QString& name) {
+    static const QStringList kExt = {
+        "txt", "md", "log", "ini", "cfg", "json", "xml", "yaml", "yml",
+        "csv", "srt", "bat", "ps1", "py", "js", "html", "css",
+        "c", "h", "cpp", "hpp", "cs", "def", "rc"
+    };
     return kExt.contains(QFileInfo(name).suffix().toLower());
 }
 
@@ -354,6 +364,18 @@ void MainWindow::openEntryTemp(const ggzip::Entry& e) {
             QMessageBox::information(this, "ggZip", "该文件不是可预览的图片。");
         } else {
             PreviewDialog dlg(pix, name, this);
+            dlg.exec();
+            QFile::remove(outPath);
+        }
+    } else if (isTextFile(name)) {
+        QFile f(outPath);
+        const QByteArray raw =
+            f.open(QIODevice::ReadOnly) ? f.read(100 * 1024) : QByteArray();
+        if (raw.isEmpty()) {
+            QMessageBox::information(this, "ggZip", "无法读取该文件内容。");
+        } else {
+            TextPreviewDialog dlg(ggzDecodeTextPreview(raw), name,
+                                  QFileInfo(outPath).size() > (qint64)raw.size(), this);
             dlg.exec();
             QFile::remove(outPath);
         }

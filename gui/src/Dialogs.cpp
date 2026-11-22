@@ -4,6 +4,7 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -11,11 +12,13 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QMessageBox>
 #include <QScreen>
 #include <QSpinBox>
 #include <QVBoxLayout>
+#include <QStringDecoder>
 
 // ---------- ExtractDialog ----------
 
@@ -178,6 +181,48 @@ PreviewDialog::PreviewDialog(const QPixmap& pixmap, const QString& fileName,
     layout->addWidget(lbl);
     layout->addWidget(buttons);
     resize(scaled.width() + 40, scaled.height() + 80);
+}
+
+// ---------- TextPreviewDialog ----------
+
+// BOM / UTF-8 / 系统编码（GBK）自动识别
+QString ggzDecodeTextPreview(const QByteArray& raw) {
+    if (raw.startsWith("\xEF\xBB\xBF"))
+        return QString::fromUtf8(raw.mid(3));
+    if (raw.startsWith("\xFF\xFE") || raw.startsWith("\xFE\xFF")) {
+        QStringDecoder d(QStringConverter::Utf16, QStringConverter::Flag::Stateless);
+        return d(raw);
+    }
+    QStringDecoder d8(QStringConverter::Utf8, QStringConverter::Flag::Stateless);
+    const QString utf8 = d8(raw);
+    if (!utf8.contains(QChar(0xFFFD))) return utf8;
+    QStringDecoder dsys(QStringConverter::System, QStringConverter::Flag::Stateless);
+    const QString sys = dsys(raw);
+    return sys.count(QChar(0xFFFD)) < utf8.count(QChar(0xFFFD)) ? sys : utf8;
+}
+
+TextPreviewDialog::TextPreviewDialog(const QString& text, const QString& fileName,
+                                     bool truncated, QWidget* parent)
+    : QDialog(parent) {
+    setWindowTitle("预览 — " + fileName);
+    resize(860, 640);
+
+    auto* view = new QPlainTextEdit;
+    view->setPlainText(text);
+    view->setReadOnly(true);
+    QFont mono(QStringLiteral("Consolas"));
+    mono.setStyleHint(QFont::TypeWriter);
+    mono.setPointSize(10);
+    view->setFont(mono);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    auto* layout = new QVBoxLayout(this);
+    if (truncated)
+        layout->addWidget(new QLabel("内容过长，仅显示前 100KB（完整内容请解压后查看）。"));
+    layout->addWidget(view, 1);
+    layout->addWidget(buttons);
 }
 
 // ---------- CreateDialog ----------
