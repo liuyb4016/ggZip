@@ -49,6 +49,29 @@ set PATH=C:\Qt\6.9.3\msvc2022_64\bin;%PATH%
 build-msvc\gui\Release\ggzip_gui.exe [可选：压缩包路径]
 ```
 
+### 构建 Shell 右键菜单扩展（可选，独立工程）
+
+```bat
+cmake -S shell -B build-shell -A x64
+cmake --build build-shell --config Release
+```
+
+产物 `build-shell\Release\ggzip_shell.dll`（MSVC，不依赖 Qt/core）。注册到当前用户（无需管理员；Win11 需在右键「显示更多选项」中可见）：
+
+```bat
+regsvr32 build-shell\Release\ggzip_shell.dll   &:: 注销加 /u
+```
+
+菜单项：智能解压 / 解压到当前文件夹 / 解压到同名文件夹（选中压缩包时），添加到 `<名>.7z` / `.zip`（选中文件或文件夹空白处时）。执行时启动 `ggz.exe`（定位顺序：环境变量 `GGZIP_GGZ` → 注册表 `HKCU\Software\ggZip\GgzPath` → DLL 同目录 → `PATH`）。
+
+自动化测试（不经 Explorer，27 项检查；干跑验证命令行，`--e2e` 走真实 ggz 全链路）：
+
+```bat
+build-shell\Release\shell_host_test.exe build-shell\Release\ggzip_shell.dll
+set GGZIP_7Z=E:\work\ggZip\tools\7zip\7za.exe
+build-shell\Release\shell_host_test.exe build-shell\Release\ggzip_shell.dll build\ggz.exe --e2e
+```
+
 ## 运行测试
 
 本机需有 7-Zip（或便携 7za.exe）：
@@ -77,7 +100,8 @@ core/   纯 C++20 核心库（无 UI 依赖）：引擎抽象 IEngine、7z.exe �
         进程管理、智能解压（决策 + 执行 extractSmart）、格式识别
 cli/    ggz 命令行工具
 gui/    Qt Widgets GUI：压缩包浏览器、解压/压缩对话框、后台任务桥（v0.2）
-shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt）（开发中）
+shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt/core）：经典菜单 +
+        自动化测试宿主；执行体为 ggz.exe（干跑测试钩子 GGZIP_SHELL_DRYRUN）
 ```
 
 核心库只依赖 C++20 标准库与 Win32，便于后续被 GUI、Shell 扩展、CLI 复用。
@@ -86,7 +110,7 @@ shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt）（开发�
 
 - [x] M0/v0.1 —— 核心引擎 + CLI + 智能解压 + 冒烟测试
 - [x] M1/v0.2 —— Qt GUI：压缩包浏览器（列表/解压/压缩/智能解压/进度取消）
-- [ ] M2/v0.3 —— Windows 右键菜单 Shell 扩展（经典菜单 + 文件关联图标）
+- [ ] M2/v0.3 —— Windows 右键菜单 Shell 扩展（经典菜单已完成并带 E2E 测试；文件关联图标待做）
 - [ ] M3 —— 密码管理器（DPAPI）、分卷压缩、SFX 自解压包、图片不解压预览
 - [ ] M4 —— Win11 新式右键菜单（IExplorerCommand）、安装包（Inno Setup）、多语言
 

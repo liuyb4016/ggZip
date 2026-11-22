@@ -9,6 +9,9 @@ CMakeUserPresets.json
 # 本地工具（便携 7-Zip 等，不入库）
 tools/
 
+# 本地日志
+aqtinstall.log
+
 # 其他
 Thumbs.db
 .DS_Store

@@ -24,3 +24,22 @@ jobs:
         run: |
           & .\build\tests\Release\ggzip_smoke.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-msvc-shell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        # Shell 扩展为独立工程（shell/），不并入根 CMakeLists
+        run: cmake -S shell -B build-shell -A x64
+
+      - name: Build
+        run: cmake --build build-shell --config Release
+
+      - name: Shell host test
+        shell: pwsh
+        # 干跑模式：不需要 7-Zip 与 ggz.exe（GGZIP_SHELL_DRYRUN 钩子）
+        run: |
+          & .\build-shell\Release\shell_host_test.exe "$PWD\build-shell\Release\ggzip_shell.dll" "C:\fake\ggz.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
