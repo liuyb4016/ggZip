@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -182,9 +183,17 @@ static std::wstring invokeDry(IContextMenu* m, UINT index, const std::wstring& d
     return flat;
 }
 
+// Windows 路径大小写不敏感：背景模式的路径来自 SHGetPathFromIDListW 的
+// 规范化大小写，可能与测试侧环境变量 TEMP 的大小写不同，必须忽略大小写比较
+static std::wstring lowered(std::wstring s) {
+    for (auto& c : s) c = static_cast<wchar_t>(towlower(c));
+    return s;
+}
+
 static bool hasAll(const std::wstring& line, const std::vector<std::wstring>& parts) {
+    const std::wstring hl = lowered(line);
     for (const auto& p : parts)
-        if (line.find(p) == std::wstring::npos) return false;
+        if (hl.find(lowered(p)) == std::wstring::npos) return false;
     return true;
 }
 
