@@ -1,5 +1,5 @@
 #pragma once
-// 压缩包条目的表格模型（名称 / 大小 / 压缩后 / 类型）。
+// 压缩包条目的表格模型：支持按目录前缀过滤（进入目录）、列排序。
 #include <QAbstractTableModel>
 #include <QString>
 #include <vector>
@@ -19,15 +19,33 @@ class ArchiveTableModel : public QAbstractTableModel {
 public:
     explicit ArchiveTableModel(QObject* parent = nullptr);
 
-    void setEntries(std::vector<ggzip::Entry> entries);  // 目录排前，其余按路径排序
+    // 重置全部条目并回到根目录
+    void setEntries(std::vector<ggzip::Entry> entries);
     void clear();
+
+    // 进入目录（prefix 以 '/' 结尾）或回到根（空串）
+    void setPrefix(const QString& prefix);
+    QString prefix() const { return prefix_; }
+    QString displayPath() const;  // 面包屑显示文本
+
+    // 当前可见行对应的条目；越界返回 nullptr
+    const ggzip::Entry* entryAt(int row) const;
+    int allCount() const { return (int)all_.size(); }  // 全部条目数（含未进入的目录）
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role) const override;
     QVariant headerData(int section, Qt::Orientation orientation,
                         int role) const override;
+    void sort(int column, Qt::SortOrder order) override;
 
 private:
-    std::vector<ggzip::Entry> entries_;
+    void rebuildView();
+    bool lessThan(int aIdx, int bIdx) const;
+
+    std::vector<ggzip::Entry> all_;  // 完整条目
+    std::vector<int> view_;          // 当前目录下可见条目的索引（已排序）
+    QString prefix_;                 // 当前目录前缀（'' = 根；以 '/' 结尾）
+    int sortColumn_ = -1;            // -1 = 默认排序（目录在前，按路径）
+    Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
 };

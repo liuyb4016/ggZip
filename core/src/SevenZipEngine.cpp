@@ -241,7 +241,7 @@ void SevenZipEngine::create(const std::wstring& archive,
             cleanup();
             std::string msg = "压缩失败 (打包 tar 阶段, exit " + std::to_string(r1.exitCode) + ")";
             msg += "\n命令: " + utf8(exe_);
-            for (const auto& a : a) { msg += " \"" + utf8(a) + "\""; }
+            for (const auto& arg : a) { msg += " \"" + utf8(arg) + "\""; }
             if (!r1.stderrTail.empty()) msg += "\n" + r1.stderrTail;
             throw ArchiveError(msg);
         }

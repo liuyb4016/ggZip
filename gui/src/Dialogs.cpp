@@ -8,7 +8,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPixmap>
 #include <QPushButton>
+#include <QScreen>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -60,6 +62,34 @@ QString ExtractDialog::targetDir() const { return dirEdit_->text().trimmed(); }
 QString ExtractDialog::password() const { return pwEdit_->text(); }
 bool ExtractDialog::smart() const { return smartCheck_->isChecked(); }
 
+// ---------- PreviewDialog ----------
+
+PreviewDialog::PreviewDialog(const QPixmap& pixmap, const QString& fileName,
+                             QWidget* parent)
+    : QDialog(parent) {
+    setWindowTitle("预览 — " + fileName);
+
+    QLabel* lbl = new QLabel;
+    lbl->setAlignment(Qt::AlignCenter);
+    // 适配屏幕可用区域的 80%，等比缩放
+    QSize target(900, 700);
+    if (const QScreen* scr = screen()) {
+        const QSize avail = scr->availableGeometry().size();
+        target = QSize(int(avail.width() * 0.8), int(avail.height() * 0.8));
+    }
+    const QPixmap scaled = pixmap.scaled(target, Qt::KeepAspectRatio,
+                                         Qt::SmoothTransformation);
+    lbl->setPixmap(scaled);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    auto* layout = new QVBoxLayout(this);
+    layout->addWidget(lbl);
+    layout->addWidget(buttons);
+    resize(scaled.width() + 40, scaled.height() + 80);
+}
+
 // ---------- CreateDialog ----------
 
 namespace {
@@ -68,7 +98,7 @@ const wchar_t* kSaveFilter =
     L"tar.xz (*.tar.xz);;gzip (*.gz);;xz (*.xz);;所有文件 (*)";
 } // namespace
 
-CreateDialog::CreateDialog(QWidget* parent) : QDialog(parent) {
+CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle("新建压缩包");
     setMinimumWidth(520);
 
@@ -78,9 +108,9 @@ CreateDialog::CreateDialog(QWidget* parent) : QDialog(parent) {
     auto* addFilesBtn = new QPushButton("添加文件...");
     auto* addFolderBtn = new QPushButton("添加文件夹...");
     auto* removeBtn = new QPushButton("移除选中");
-    connect(addFilesBtn, &QPushButton::clicked, this, &CreateDialog::addFiles);
-    connect(addFolderBtn, &QPushButton::clicked, this, &CreateDialog::addFolder);
-    connect(removeBtn, &QPushButton::clicked, this, &CreateDialog::removeSelected);
+    connect(addFilesBtn, &QPushButton::clicked, this, &CreateArchiveDialog::addFiles);
+    connect(addFolderBtn, &QPushButton::clicked, this, &CreateArchiveDialog::addFolder);
+    connect(removeBtn, &QPushButton::clicked, this, &CreateArchiveDialog::removeSelected);
     auto* btnRow = new QHBoxLayout;
     btnRow->addWidget(addFilesBtn);
     btnRow->addWidget(addFolderBtn);
@@ -129,29 +159,29 @@ CreateDialog::CreateDialog(QWidget* parent) : QDialog(parent) {
     layout->addWidget(buttons);
 }
 
-void CreateDialog::addFiles() {
+void CreateArchiveDialog::addFiles() {
     const QStringList files = QFileDialog::getOpenFileNames(this, "选择文件");
     for (const QString& f : files)
         if (!f.isEmpty()) inputList_->addItem(f);
 }
 
-void CreateDialog::addFolder() {
+void CreateArchiveDialog::addFolder() {
     const QString dir = QFileDialog::getExistingDirectory(this, "选择文件夹");
     if (!dir.isEmpty()) inputList_->addItem(dir + (dir.endsWith('/') ? "*" : "/*"));
 }
 
-void CreateDialog::removeSelected() {
+void CreateArchiveDialog::removeSelected() {
     const auto selected = inputList_->selectedItems();
     for (QListWidgetItem* item : selected)
         delete item;
 }
 
-QStringList CreateDialog::inputs() const {
+QStringList CreateArchiveDialog::inputs() const {
     QStringList result;
     for (int i = 0; i < inputList_->count(); ++i)
         result << inputList_->item(i)->text();
     return result;
 }
-QString CreateDialog::archivePath() const { return outEdit_->text().trimmed(); }
-QString CreateDialog::password() const { return pwEdit_->text(); }
-int CreateDialog::level() const { return levelSpin_->value(); }
+QString CreateArchiveDialog::archivePath() const { return outEdit_->text().trimmed(); }
+QString CreateArchiveDialog::password() const { return pwEdit_->text(); }
+int CreateArchiveDialog::level() const { return levelSpin_->value(); }

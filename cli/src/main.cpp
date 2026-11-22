@@ -62,7 +62,7 @@ void printProgress(const ggzip::Progress& p) {
 }
 
 const char* kUsage =
-    "ggz 1.0 —— ggZip 命令行工具\n"
+    "ggz —— ggZip 命令行工具\n"
     "\n"
     "用法:\n"
     "  ggz list <压缩包>                                  列出内容\n"
@@ -209,7 +209,7 @@ int wmain(int argc, wchar_t** argv) {
             return 0;
         }
         if (cmd == L"version" || cmd == L"--version") {
-            outln("ggz (ggZip) 0.1.0");
+            outln("ggz (ggZip) 0.2.1");
             return 0;
         }
         outln(kUsage);

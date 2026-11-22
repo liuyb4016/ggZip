@@ -4,25 +4,82 @@
 ArchiveTableModel::ArchiveTableModel(QObject* parent) : QAbstractTableModel(parent) {}
 
 void ArchiveTableModel::setEntries(std::vector<ggzip::Entry> entries) {
-    beginResetModel();
-    // 目录在前，其余按路径升序
-    std::stable_sort(entries.begin(), entries.end(),
-                     [](const ggzip::Entry& a, const ggzip::Entry& b) {
-                         if (a.isDir != b.isDir) return a.isDir > b.isDir;
-                         return a.path < b.path;
-                     });
-    entries_ = std::move(entries);
-    endResetModel();
+    all_ = std::move(entries);
+    prefix_.clear();
+    sortColumn_ = -1;
+    rebuildView();
 }
 
 void ArchiveTableModel::clear() {
     beginResetModel();
-    entries_.clear();
+    all_.clear();
+    view_.clear();
+    prefix_.clear();
+    sortColumn_ = -1;
     endResetModel();
 }
 
+void ArchiveTableModel::setPrefix(const QString& prefix) {
+    prefix_ = prefix;
+    rebuildView();
+}
+
+QString ArchiveTableModel::displayPath() const {
+    return prefix_.isEmpty() ? QStringLiteral("(根目录)") : prefix_;
+}
+
+const ggzip::Entry* ArchiveTableModel::entryAt(int row) const {
+    if (row < 0 || row >= (int)view_.size()) return nullptr;
+    return &all_[(size_t)view_[(size_t)row]];
+}
+
+// 只显示 prefix 的直接子项（子目录本身与文件）
+void ArchiveTableModel::rebuildView() {
+    beginResetModel();
+    view_.clear();
+    const std::wstring wp = prefix_.toStdWString();
+    for (size_t i = 0; i < all_.size(); ++i) {
+        std::wstring p = all_[i].path;
+        if (!p.empty() && p.back() == L'/') p.pop_back();
+        if (p.empty()) continue;
+        // 必须位于 prefix 之下
+        if (p.size() <= wp.size() || p.compare(0, wp.size(), wp) != 0) continue;
+        if (!wp.empty() && p[wp.size()] != L'/') continue;
+        // 且是直接子项（其余部分不再含 '/'）
+        const size_t restStart = wp.empty() ? 0 : wp.size() + 1;
+        if (p.find(L'/', restStart) != std::wstring::npos) continue;
+        view_.push_back((int)i);
+    }
+    std::stable_sort(view_.begin(), view_.end(),
+                     [this](int a, int b) { return lessThan(a, b); });
+    endResetModel();
+}
+
+bool ArchiveTableModel::lessThan(int aIdx, int bIdx) const {
+    const ggzip::Entry& A = all_[(size_t)aIdx];
+    const ggzip::Entry& B = all_[(size_t)bIdx];
+    if (sortColumn_ < 0) {
+        if (A.isDir != B.isDir) return A.isDir;  // 目录在前
+        return A.path < B.path;
+    }
+    const bool asc = (sortOrder_ == Qt::AscendingOrder);
+    int c = 0;
+    switch (sortColumn_) {
+        case 0: c = A.path.compare(B.path); break;
+        case 1: c = (A.size < B.size) ? -1 : (A.size > B.size ? 1 : 0); break;
+        case 2:
+            c = (A.packedSize < B.packedSize) ? -1 : (A.packedSize > B.packedSize ? 1 : 0);
+            break;
+        case 3: c = (A.isDir == B.isDir) ? 0 : (B.isDir ? 1 : -1); break;
+        default: break;
+    }
+    if (c != 0) return asc ? c < 0 : c > 0;
+    if (A.isDir != B.isDir) return asc ? A.isDir : B.isDir;  // 同值时目录仍在前
+    return A.path < B.path;
+}
+
 int ArchiveTableModel::rowCount(const QModelIndex& parent) const {
-    return parent.isValid() ? 0 : (int)entries_.size();
+    return parent.isValid() ? 0 : (int)view_.size();
 }
 
 int ArchiveTableModel::columnCount(const QModelIndex& parent) const {
@@ -30,14 +87,14 @@ int ArchiveTableModel::columnCount(const QModelIndex& parent) const {
 }
 
 QVariant ArchiveTableModel::data(const QModelIndex& index, int role) const {
-    if (!index.isValid() || index.row() >= (int)entries_.size() || role != Qt::DisplayRole)
-        return {};
-    const ggzip::Entry& e = entries_[(size_t)index.row()];
+    if (role != Qt::DisplayRole || !index.isValid()) return {};
+    const ggzip::Entry* e = entryAt(index.row());
+    if (!e) return {};
     switch (index.column()) {
-        case 0: return QString::fromStdWString(e.path);
-        case 1: return e.isDir ? QVariant() : ggzHumanSize(e.size);
-        case 2: return e.isDir ? QVariant() : ggzHumanSize(e.packedSize);
-        case 3: return e.isDir ? QString("目录") : QString("文件");
+        case 0: return QString::fromStdWString(e->path);
+        case 1: return e->isDir ? QVariant() : ggzHumanSize(e->size);
+        case 2: return e->isDir ? QVariant() : ggzHumanSize(e->packedSize);
+        case 3: return e->isDir ? QString("目录") : QString("文件");
     }
     return {};
 }
@@ -52,4 +109,10 @@ QVariant ArchiveTableModel::headerData(int section, Qt::Orientation orientation,
         case 3: return "类型";
     }
     return {};
+}
+
+void ArchiveTableModel::sort(int column, Qt::SortOrder order) {
+    sortColumn_ = column;
+    sortOrder_ = order;
+    rebuildView();
 }

@@ -2,25 +2,33 @@
 #include "ArchiveTableModel.h"
 #include "Dialogs.h"
 #include "ProgressRunner.h"
+#include "ggzip/ArchiveError.h"
 #include "ggzip/EngineFactory.h"
 #include "ggzip/IEngine.h"
 #include "ggzip/SmartExtract.h"
 #include <QAction>
 #include <QApplication>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QItemSelection>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QProgressDialog>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTableView>
 #include <QToolBar>
+#include <qt_windows.h>
+#include <shellapi.h>
+#include <algorithm>
 #include <atomic>
 #include <functional>
 
@@ -31,6 +39,12 @@ std::wstring toW(const QString& s) { return s.toStdWString(); }
 const wchar_t* kFilter =
     L"压缩包 (*.zip *.7z *.rar *.tar *.gz *.tgz *.bz2 *.tbz *.xz *.txz *.zst *.tzst "
     L"*.iso *.cab *.wim *.msi *.jar *.apk);;所有文件 (*.*)";
+
+bool isImageFile(const QString& name) {
+    static const QStringList kExt = { "png", "jpg", "jpeg", "gif",
+                                      "bmp", "webp", "ico" };
+    return kExt.contains(QFileInfo(name).suffix().toLower());
+}
 
 } // namespace
 
@@ -46,6 +60,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setAlternatingRowColors(true);
     table_->setWordWrap(false);
+    table_->setSortingEnabled(true);   // 点击表头排序（模型 sort() 覆盖实现）
     setCentralWidget(table_);
 
     runner_ = new ProgressRunner(this);
@@ -92,6 +107,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolBar->addAction(actSmartExtract_);
     toolBar->addAction(actCreate_);
 
+    // ---- 导航栏（上级目录 + 当前路径）----
+    actUp_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), "上级目录", this);
+    actUp_->setShortcut(QKeySequence("Alt+Up"));
+    actUp_->setEnabled(false);
+    connect(actUp_, &QAction::triggered, this, &MainWindow::goUp);
+    pathLabel_ = new QLabel("(根目录)");
+    auto* navBar = addToolBar("导航");
+    navBar->setMovable(false);
+    navBar->addAction(actUp_);
+    navBar->addWidget(pathLabel_);
+
     // ---- 状态栏 / 进度对话框 ----
     statusLabel_ = new QLabel("把压缩包拖进窗口，或使用 文件-打开压缩包");
     statusBar()->addWidget(statusLabel_, 1);
@@ -114,12 +140,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(runner_, &ProgressRunner::finished, this,
             &MainWindow::onOpFinished);
 
+    // 双击：目录进入 / 文件预览或打开
+    connect(table_, &QTableView::doubleClicked, this, &MainWindow::onDoubleClicked);
+    // 选中统计
+    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            [this](const QItemSelection&, const QItemSelection&) {
+                const QModelIndexList sel = table_->selectionModel()->selectedRows();
+                if (sel.isEmpty()) { statusLabel_->setText(baseStatus_); return; }
+                quint64 total = 0;
+                for (const QModelIndex& r : sel) {
+                    if (const ggzip::Entry* e = model_->entryAt(r.row()))
+                        total += e->size;
+                }
+                statusLabel_->setText(QString("已选 %1 项，合计 %2")
+                                          .arg(sel.size())
+                                          .arg(ggzHumanSize(total)));
+            });
+
     setAcceptDrops(true);
     setWindowTitle("ggZip");
     updateActionStates();
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    if (!previewTempDir_.isEmpty())
+        QDir(previewTempDir_).removeRecursively();
+}
 
 void MainWindow::openArchive(const QString& path) {
     if (!engine_->available()) { warnEngineMissing(); return; }
@@ -174,7 +220,7 @@ void MainWindow::startCreate() {
     if (!engine_->available()) { warnEngineMissing(); return; }
     if (runner_->isRunning()) return;
 
-    CreateDialog dlg(this);
+    CreateArchiveDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted) return;
 
     currentOp_ = Op::Create;
@@ -220,9 +266,10 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
             pendingEntries_.clear();
             const QString name = QFileInfo(currentArchive_).fileName();
             setWindowTitle("ggZip — " + name);
-            statusLabel_->setText(QString("条目: %1    物理大小: %2")
-                                      .arg(model_->rowCount())
-                                      .arg(ggzHumanSize(QFileInfo(currentArchive_).size())));
+            setBaseStatus(QString("条目: %1    物理大小: %2")
+                              .arg((int)model_->allCount())
+                              .arg(ggzHumanSize(QFileInfo(currentArchive_).size())));
+            updatePathUi();
             updateActionStates();
             break;
         }
@@ -239,6 +286,101 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
         case Op::None:
             break;
     }
+}
+
+void MainWindow::onDoubleClicked(const QModelIndex& index) {
+    if (!index.isValid() || runner_->isRunning()) return;
+    const ggzip::Entry* e = model_->entryAt(index.row());
+    if (!e) return;
+    if (e->isDir) {
+        model_->setPrefix(QString::fromStdWString(e->path));  // 目录路径以 '/' 结尾
+        updatePathUi();
+    } else {
+        openEntryTemp(*e);
+    }
+}
+
+// 提取单个条目到临时目录：图片弹预览窗口，其他文件交给系统默认程序打开
+void MainWindow::openEntryTemp(const ggzip::Entry& e) {
+    if (!engine_->available()) { warnEngineMissing(); return; }
+    if (currentArchive_.isEmpty()) return;
+    if (e.size > 200ull * 1024 * 1024) {
+        QMessageBox::information(this, "ggZip", "文件过大（>200MB），请直接解压后打开。");
+        return;
+    }
+
+    const QString relPath = QString::fromStdWString(e.path);
+    const QString name = QFileInfo(relPath).fileName();
+    const QString outPath = previewTempRoot() + "/" + relPath;
+
+    // 7z 的 include 匹配依赖存储分隔符：先试原生 '\'，失败再试 '/'
+    std::wstring nativePath = e.path;
+    std::replace(nativePath.begin(), nativePath.end(), L'/', L'\\');
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString err;
+    try {
+        const std::wstring warc = toW(currentArchive_);
+        const std::wstring wout = toW(previewTempDir_);
+        ggzip::ExtractOptions opt;
+        try {
+            engine_->extract(warc, wout, { nativePath }, opt, {}, previewCancel_);
+        } catch (const ggzip::ArchiveError&) {
+            engine_->extract(warc, wout, { e.path }, opt, {}, previewCancel_);
+        }
+    } catch (const std::exception& ex) {
+        err = QString::fromUtf8(ex.what());
+    }
+    QApplication::restoreOverrideCursor();
+
+    if (!QFile::exists(outPath)) {
+        QMessageBox::warning(this, "ggZip", "无法提取该文件用于预览。\n" + err);
+        return;
+    }
+
+    if (isImageFile(name)) {
+        QPixmap pix(outPath);
+        if (pix.isNull()) {
+            QMessageBox::information(this, "ggZip", "该文件不是可预览的图片。");
+        } else {
+            PreviewDialog dlg(pix, name, this);
+            dlg.exec();
+            QFile::remove(outPath);
+        }
+    } else {
+        // 用系统默认程序打开；临时文件保留到程序退出时统一清理
+        ShellExecuteW(nullptr, L"open", toW(outPath).c_str(), nullptr, nullptr,
+                      SW_SHOWNORMAL);
+    }
+}
+
+void MainWindow::goUp() {
+    const QString p = model_->prefix();
+    if (p.isEmpty()) return;
+    QString t = p;
+    t.chop(1);  // 去掉结尾 '/'
+    const int slash = int(t.lastIndexOf('/'));
+    model_->setPrefix(slash < 0 ? QString() : t.left(slash + 1));
+    updatePathUi();
+}
+
+void MainWindow::updatePathUi() {
+    pathLabel_->setText(model_->displayPath());
+    actUp_->setEnabled(!model_->prefix().isEmpty());
+}
+
+void MainWindow::setBaseStatus(const QString& text) {
+    baseStatus_ = text;
+    statusLabel_->setText(text);
+}
+
+QString MainWindow::previewTempRoot() {
+    if (previewTempDir_.isEmpty()) {
+        previewTempDir_ = QStandardPaths::writableLocation(QStandardPaths::TempLocation) +
+                          "/ggZip_preview";
+    }
+    QDir().mkpath(previewTempDir_);
+    return previewTempDir_;
 }
 
 void MainWindow::warnEngineMissing() {
