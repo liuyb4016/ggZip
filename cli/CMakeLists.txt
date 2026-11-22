@@ -1,0 +1,10 @@
+add_executable(ggzip src/main.cpp)
+target_link_libraries(ggzip PRIVATE ggzip_core)
+set_target_properties(ggzip PROPERTIES OUTPUT_NAME "ggz")
+
+if(MSVC)
+    target_compile_options(ggzip PRIVATE /W4 /utf-8 /permissive-)
+elseif(MINGW)
+    target_compile_options(ggzip PRIVATE -municode -Wall -Wextra)
+    target_link_options(ggzip PRIVATE -municode -static -static-libgcc -static-libstdc++)
+endif()

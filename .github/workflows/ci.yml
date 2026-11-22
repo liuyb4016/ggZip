@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGGZ_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Smoke test
+        shell: pwsh
+        env:
+          GGZIP_7Z: C:\Program Files\7-Zip\7z.exe
+        run: |
+          & .\build\tests\Release\ggzip_smoke.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
