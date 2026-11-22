@@ -1,15 +1,18 @@
 #include "Dialogs.h"
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPixmap>
 #include <QPushButton>
+#include <QMessageBox>
 #include <QScreen>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -29,6 +32,23 @@ ExtractDialog::ExtractDialog(const QString& archivePath, bool smartDefault,
     smartCheck_ = new QCheckBox("智能解压（单根目录直接解压，否则自动建子文件夹）");
     smartCheck_->setChecked(smartDefault);
 
+    // 密码库下拉（有保存的密码时才显示）
+    try {
+        stored_ = ggzip::PasswordStore().load();
+    } catch (const std::exception&) {
+        stored_.clear();
+    }
+    if (!stored_.empty()) {
+        pwPreset_ = new QComboBox;
+        pwPreset_->addItem("手动输入");
+        for (const auto& e : stored_)
+            pwPreset_->addItem(QString::fromStdWString(e.label));
+        connect(pwPreset_, &QComboBox::currentIndexChanged, this, [this](int idx) {
+            if (idx > 0 && idx <= (int)stored_.size())
+                pwEdit_->setText(QString::fromStdWString(stored_[(size_t)idx - 1].password));
+        });
+    }
+
     auto* browse = new QPushButton("浏览...");
     connect(browse, &QPushButton::clicked, this, [this] {
         QString dir = QFileDialog::getExistingDirectory(this, "选择解压目标目录",
@@ -42,6 +62,7 @@ ExtractDialog::ExtractDialog(const QString& archivePath, bool smartDefault,
     auto* form = new QFormLayout;
     form->addRow("源压缩包:", new QLabel(QFileInfo(archivePath).fileName()));
     form->addRow("目标目录:", dirRow);
+    if (pwPreset_) form->addRow("从密码库:", pwPreset_);
     form->addRow("密码:", pwEdit_);
 
     auto* buttons =
@@ -61,6 +82,75 @@ ExtractDialog::ExtractDialog(const QString& archivePath, bool smartDefault,
 QString ExtractDialog::targetDir() const { return dirEdit_->text().trimmed(); }
 QString ExtractDialog::password() const { return pwEdit_->text(); }
 bool ExtractDialog::smart() const { return smartCheck_->isChecked(); }
+
+// ---------- PasswordManagerDialog ----------
+
+PasswordManagerDialog::PasswordManagerDialog(QWidget* parent) : QDialog(parent) {
+    setWindowTitle("密码管理器");
+    setMinimumWidth(440);
+
+    list_ = new QListWidget;
+    auto* addBtn = new QPushButton("添加...");
+    auto* removeBtn = new QPushButton("删除选中");
+    connect(addBtn, &QPushButton::clicked, this, &PasswordManagerDialog::addPassword);
+    connect(removeBtn, &QPushButton::clicked, this, &PasswordManagerDialog::removeSelected);
+    auto* btnRow = new QHBoxLayout;
+    btnRow->addWidget(addBtn);
+    btnRow->addWidget(removeBtn);
+    btnRow->addStretch(1);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    auto* layout = new QVBoxLayout(this);
+    layout->addWidget(new QLabel(
+        "密码以 DPAPI（当前用户作用域）加密存储。\n标签建议使用压缩包文件名，解压时可在下拉框快速填充。"));
+    layout->addWidget(list_, 1);
+    layout->addLayout(btnRow);
+    layout->addWidget(buttons);
+    reload();
+}
+
+void PasswordManagerDialog::reload() {
+    list_->clear();
+    try {
+        for (const auto& e : ggzip::PasswordStore().load())
+            list_->addItem(QString::fromStdWString(e.label));
+    } catch (const std::exception& ex) {
+        QMessageBox::warning(this, "ggZip", QString("读取密码库失败: ") + ex.what());
+    }
+}
+
+void PasswordManagerDialog::addPassword() {
+    bool ok = false;
+    const QString label = QInputDialog::getText(this, "添加密码", "标签（如压缩包文件名）:",
+                                                QLineEdit::Normal, {}, &ok);
+    if (!ok || label.trimmed().isEmpty()) return;
+    const QString pw = QInputDialog::getText(this, "添加密码", "密码:",
+                                             QLineEdit::Password, {}, &ok);
+    if (!ok || pw.isEmpty()) return;
+    try {
+        ggzip::PasswordStore store;
+        store.add(label.trimmed().toStdWString(), pw.toStdWString());
+    } catch (const std::exception& ex) {
+        QMessageBox::warning(this, "ggZip", QString("保存失败: ") + ex.what());
+        return;
+    }
+    reload();
+}
+
+void PasswordManagerDialog::removeSelected() {
+    QListWidgetItem* item = list_->currentItem();
+    if (!item) return;
+    try {
+        ggzip::PasswordStore store;
+        store.remove(item->text().toStdWString());
+    } catch (const std::exception& ex) {
+        QMessageBox::warning(this, "ggZip", QString("删除失败: ") + ex.what());
+        return;
+    }
+    reload();
+}
 
 // ---------- PreviewDialog ----------
 
@@ -133,6 +223,23 @@ CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {
     pwEdit_->setEchoMode(QLineEdit::Password);
     pwEdit_->setPlaceholderText("仅 7z/zip 支持，留空表示不加密");
 
+    // 密码库下拉（有保存的密码时才显示）
+    try {
+        stored_ = ggzip::PasswordStore().load();
+    } catch (const std::exception&) {
+        stored_.clear();
+    }
+    if (!stored_.empty()) {
+        pwPreset_ = new QComboBox;
+        pwPreset_->addItem("手动输入");
+        for (const auto& e : stored_)
+            pwPreset_->addItem(QString::fromStdWString(e.label));
+        connect(pwPreset_, &QComboBox::currentIndexChanged, this, [this](int idx) {
+            if (idx > 0 && idx <= (int)stored_.size())
+                pwEdit_->setText(QString::fromStdWString(stored_[(size_t)idx - 1].password));
+        });
+    }
+
     levelSpin_ = new QSpinBox;
     levelSpin_->setRange(1, 9);
     levelSpin_->setValue(5);
@@ -140,6 +247,7 @@ CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {
 
     auto* form = new QFormLayout;
     form->addRow("保存为:", outRow);
+    if (pwPreset_) form->addRow("从密码库:", pwPreset_);
     form->addRow("密码:", pwEdit_);
     form->addRow("压缩级别:", levelSpin_);
 

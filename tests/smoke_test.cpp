@@ -5,6 +5,7 @@
 #include "ggzip/EngineFactory.h"
 #include "ggzip/Format.h"
 #include "ggzip/IEngine.h"
+#include "ggzip/PasswordStore.h"
 #include "ggzip/SmartExtract.h"
 #include "ggzip/Text.h"
 #include <atomic>
@@ -172,7 +173,27 @@ int wmain() {
             check(ok, "test(zip) 完整性测试");
         }
 
-        // 4) 智能解压决策
+        // 4) 密码管理器：DPAPI 回读写（注入临时目录，不碰真实库）
+        {
+            fs::path pdir = root / "pwstore";
+            ggzip::PasswordStore store(pdir.wstring());
+            check(store.load().empty(), "密码库初始为空");
+
+            store.add(L"demo.zip", L"secret123");
+            store.add(L"backup.7z", L"密码abc");
+            store.add(L"demo.zip", L"secret456");  // 覆盖同标签
+
+            auto es = store.load();
+            bool sizeOk = (es.size() == 2);
+            bool findOk = store.find(L"demo.zip").value_or(L"") == L"secret456";
+            bool zhOk = store.find(L"backup.7z").value_or(L"") == L"密码abc";
+            check(sizeOk && findOk && zhOk, "密码库写入/覆盖/读取（DPAPI）");
+
+            bool removed = store.remove(L"backup.7z");
+            check(removed && store.load().size() == 1, "密码库删除");
+        }
+
+        // 5) 智能解压决策
         {
             fs::path srcA = root / "srcA";
             writeBin(srcA / "data" / "f1.txt", "A\n");

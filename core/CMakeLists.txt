@@ -5,6 +5,7 @@ add_library(ggzip_core STATIC
     src/SevenZipEngine.cpp
     src/EngineFactory.cpp
     src/SmartExtract.cpp
+    src/PasswordStore.cpp
 )
 target_include_directories(ggzip_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(ggzip_core PUBLIC UNICODE _UNICODE)
@@ -15,3 +16,6 @@ if(MSVC)
 elseif(MINGW)
     target_compile_options(ggzip_core PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
+
+# DPAPI（密码管理器）
+target_link_libraries(ggzip_core PRIVATE crypt32)

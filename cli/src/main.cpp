@@ -4,6 +4,7 @@
 #include "ggzip/EngineFactory.h"
 #include "ggzip/Format.h"
 #include "ggzip/IEngine.h"
+#include "ggzip/PasswordStore.h"
 #include "ggzip/SmartExtract.h"
 #include "ggzip/Text.h"
 #include <atomic>
@@ -70,6 +71,7 @@ const char* kUsage =
     "  ggz smart-extract <压缩包> [-o 目录] [-p 密码]      智能解压\n"
     "  ggz create <压缩包> <输入...> [-p 密码] [--level N] [--threads N]  压缩\n"
     "  ggz test <压缩包> [-p 密码]                        完整性测试\n"
+    "  ggz pass list | add <标签> -p <密码> | remove <标签>   密码库管理（DPAPI 加密）\n"
     "  ggz where                                          显示压缩引擎路径\n"
     "\n"
     "示例:\n"
@@ -176,7 +178,10 @@ int wmain(int argc, wchar_t** argv) {
         if (!parseArgs(argc, argv, cmd, a)) { outln(kUsage); return 1; }
 
         auto engine = ggzip::createEngine();
-        if (!engine->available()) {
+        const bool needsEngine = (cmd == L"list" || cmd == L"extract" ||
+                                  cmd == L"smart-extract" || cmd == L"create" ||
+                                  cmd == L"test");
+        if (needsEngine && !engine->available()) {
             errln("未找到 7z.exe 压缩引擎。\n"
                   "请安装 7-Zip（https://www.7-zip.org），或将 7z.exe 放在 ggz.exe 同目录，\n"
                   "或设置环境变量 GGZIP_7Z 指向 7z.exe。");
@@ -199,6 +204,37 @@ int wmain(int argc, wchar_t** argv) {
         if (cmd == L"create") {
             if (a.archive.empty() || a.inputs.empty()) { outln(kUsage); return 1; }
             return cmdCreate(*engine, a);
+        }
+        if (cmd == L"pass") {
+            const std::wstring sub = a.archive;   // 第一个位置参数 = 子命令
+            const std::wstring label =
+                a.inputs.empty() ? std::wstring() : a.inputs[0];
+            ggzip::PasswordStore store;
+            if (sub == L"list") {
+                auto es = store.load();
+                if (es.empty()) { outln("密码库为空"); return 0; }
+                for (const auto& e : es)
+                    outln("  " + ggzip::utf8(e.label) + "  （密码 " +
+                          std::to_string(e.password.size()) + " 字符）");
+                return 0;
+            }
+            if (sub == L"add") {
+                if (label.empty() || a.password.empty()) {
+                    outln("用法: ggz pass add <标签> -p <密码>");
+                    return 1;
+                }
+                store.add(label, a.password);
+                outln("已保存密码: " + ggzip::utf8(label));
+                return 0;
+            }
+            if (sub == L"remove") {
+                if (label.empty()) { outln("用法: ggz pass remove <标签>"); return 1; }
+                outln(store.remove(label) ? "已删除: " + ggzip::utf8(label)
+                                          : "未找到: " + ggzip::utf8(label));
+                return 0;
+            }
+            outln("用法: ggz pass list | add <标签> -p <密码> | remove <标签>");
+            return 1;
         }
         if (cmd == L"test") {
             if (a.archive.empty()) { outln(kUsage); return 1; }

@@ -100,6 +100,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(actQuit, &QAction::triggered, this, &MainWindow::close);
     fileMenu->addAction(actQuit);
 
+    QMenu* settingsMenu = menuBar()->addMenu("设置(&O)");
+    QAction* actPwMgr = new QAction("密码管理器(&P)...", this);
+    connect(actPwMgr, &QAction::triggered, this, [this] {
+        PasswordManagerDialog dlg(this);
+        dlg.exec();
+    });
+    settingsMenu->addAction(actPwMgr);
+
     auto* toolBar = addToolBar("主工具栏");
     toolBar->setMovable(false);
     toolBar->addAction(actOpen);

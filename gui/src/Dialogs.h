@@ -1,9 +1,12 @@
 #pragma once
-// 解压 / 压缩 / 预览对话框。
+// 解压 / 压缩 / 预览 / 密码管理对话框。
 #include <QDialog>
 #include <QStringList>
+#include <vector>
+#include "ggzip/PasswordStore.h"
 
 class QCheckBox;
+class QComboBox;
 class QLineEdit;
 class QListWidget;
 class QSpinBox;
@@ -22,6 +25,21 @@ private:
     QLineEdit* dirEdit_;
     QLineEdit* pwEdit_;
     QCheckBox* smartCheck_;
+    QComboBox* pwPreset_ = nullptr;
+    std::vector<ggzip::PasswordEntry> stored_;  // 密码库条目（供下拉填充）
+};
+
+// 密码管理器（DPAPI 存储）
+class PasswordManagerDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit PasswordManagerDialog(QWidget* parent = nullptr);
+
+private:
+    void reload();
+    void addPassword();
+    void removeSelected();
+    QListWidget* list_;
 };
 
 class QPixmap;
@@ -53,5 +71,7 @@ private:
     QListWidget* inputList_;
     QLineEdit* outEdit_;
     QLineEdit* pwEdit_;
+    QComboBox* pwPreset_ = nullptr;
+    std::vector<ggzip::PasswordEntry> stored_;
     QSpinBox* levelSpin_;
 };
