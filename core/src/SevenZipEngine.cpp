@@ -132,6 +132,13 @@ bool SevenZipEngine::available() const { return !exe_.empty(); }
 
 std::wstring SevenZipEngine::enginePath() const { return exe_; }
 
+std::wstring SevenZipEngine::resolveFirstVolume(const std::wstring& path) const {
+    if (fileExists(path)) return path;
+    const std::wstring v1 = path + L".001";
+    if (fileExists(v1)) return v1;
+    return path;  // 保持原路径，requireFile 会给出清晰错误
+}
+
 void SevenZipEngine::ensure() const {
     if (exe_.empty())
         throw ArchiveError("未找到 7z.exe 压缩引擎。请安装 7-Zip、设置环境变量 GGZIP_7Z，"
@@ -141,10 +148,11 @@ void SevenZipEngine::ensure() const {
 ArchiveInfo SevenZipEngine::inspect(const std::wstring& archive,
                                     std::vector<Entry>* entries) const {
     ensure();
-    requireFile(archive, "压缩包");
+    const std::wstring real = resolveFirstVolume(archive);
+    requireFile(real, "压缩包");
     std::string text;
     static std::atomic_bool noCancel{ false };
-    proc::RunResult r = proc::run(exe_, { L"l", L"-slt", L"-sccUTF-8", archive },
+    proc::RunResult r = proc::run(exe_, { L"l", L"-slt", L"-sccUTF-8", real },
         [&](std::string_view c) { text.append(c); return true; }, noCancel);
     if (r.exitCode != 0) {
         std::string msg = "读取压缩包失败 (exit " + std::to_string(r.exitCode) + "): " + utf8(archive);
@@ -201,8 +209,9 @@ void SevenZipEngine::extract(const std::wstring& archive, const std::wstring& ou
                              const ExtractOptions& opt, const ProgressFn& onProgress,
                              const std::atomic_bool& cancel) const {
     ensure();
-    requireFile(archive, "压缩包");
-    std::vector<std::wstring> args{ L"x", archive, L"-o" + outDir, L"-y" };
+    const std::wstring real = resolveFirstVolume(archive);
+    requireFile(real, "压缩包");
+    std::vector<std::wstring> args{ L"x", real, L"-o" + outDir, L"-y" };
     if (!opt.password.empty()) args.push_back(L"-p" + opt.password);
     for (const auto& f : include) args.push_back(f);
     runWithProgress(std::move(args), onProgress, cancel, "解压");
@@ -269,9 +278,20 @@ void SevenZipEngine::create(const std::wstring& archive,
         throw ArchiveError(utf8(type) + " 格式只支持单个文件；多文件请使用 .tar.gz / .tar.xz 等，或 7z / zip。");
 
     DeleteFileW(archive.c_str());   // create 语义 = 全新建压缩包
+    if (!opt.volumeSize.empty()) {
+        // 清理旧分卷（.001 .002 ...）
+        for (int i = 1; i <= 9999; ++i) {
+            wchar_t suffix[16];
+            std::swprintf(suffix, 16, L".%03d", i);
+            std::wstring v = archive + suffix;
+            if (!fileExists(v)) break;
+            DeleteFileW(v.c_str());
+        }
+    }
 
     std::vector<std::wstring> args{ L"a", archive, L"-t" + type, L"-y",
         L"-mx" + std::to_wstring(opt.level < 0 ? 5 : opt.level) };
+    if (!opt.volumeSize.empty()) args.push_back(L"-v" + opt.volumeSize);
     if (opt.threads > 0) args.push_back(L"-mmt" + std::to_wstring(opt.threads));
     if (!opt.password.empty()) {
         args.push_back(L"-p" + opt.password);
@@ -285,8 +305,9 @@ void SevenZipEngine::test(const std::wstring& archive, const std::wstring& passw
                           const ProgressFn& onProgress,
                           const std::atomic_bool& cancel) const {
     ensure();
-    requireFile(archive, "压缩包");
-    std::vector<std::wstring> args{ L"t", archive, L"-y" };
+    const std::wstring real = resolveFirstVolume(archive);
+    requireFile(real, "压缩包");
+    std::vector<std::wstring> args{ L"t", real, L"-y" };
     if (!password.empty()) args.push_back(L"-p" + password);
     runWithProgress(std::move(args), onProgress, cancel, "完整性测试");
 }

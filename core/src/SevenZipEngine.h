@@ -34,6 +34,8 @@ private:
     void ensure() const;
     void runWithProgress(std::vector<std::wstring> args, const ProgressFn& onProgress,
                          const std::atomic_bool& cancel, const std::string& what) const;
+    // 读取类操作的首卷解析：a.zip 不存在但 a.zip.001 存在 -> 返回 a.zip.001
+    std::wstring resolveFirstVolume(const std::wstring& path) const;
 
     std::wstring exe_;
 };

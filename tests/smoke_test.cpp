@@ -193,7 +193,24 @@ int wmain() {
             check(removed && store.load().size() == 1, "密码库删除");
         }
 
-        // 5) 智能解压决策
+        // 6) 分卷压缩与解压（.7z 分卷；基础名自动解析首卷 .001）
+        {
+            ggzip::CreateOptions vo;
+            vo.level = 1;
+            vo.volumeSize = L"1m";  // big.bin 3MB -> 多卷
+            std::wstring vol = (root / L"vol.7z").wstring();
+            engine->create(vol, { src.wstring() + L"\\*" }, vo, kNoProgress, g_cancel);
+            check(fs::exists(root / L"vol.7z.001") && fs::exists(root / L"vol.7z.002"),
+                  "分卷创建 vol.7z.001/.002");
+
+            fs::path vout = root / "outvol";
+            fs::create_directories(vout);
+            engine->extract((root / L"vol.7z").wstring(), vout.wstring(), {}, {},
+                            kNoProgress, g_cancel);
+            check(readBin(vout / "big.bin") == big, "分卷解压回读 big.bin");
+        }
+
+        // 7) 智能解压决策
         {
             fs::path srcA = root / "srcA";
             writeBin(srcA / "data" / "f1.txt", "A\n");

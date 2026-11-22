@@ -245,11 +245,17 @@ CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {
     levelSpin_->setValue(5);
     levelSpin_->setToolTip("1=最快 9=最小");
 
+    volCombo_ = new QComboBox;
+    volCombo_->addItems({ "不分卷", "10m", "50m", "100m", "500m", "1g" });
+    volCombo_->setEditable(true);
+    volCombo_->setToolTip("分卷大小：每个分卷的最大字节数（如 100m、1g）");
+
     auto* form = new QFormLayout;
     form->addRow("保存为:", outRow);
     if (pwPreset_) form->addRow("从密码库:", pwPreset_);
     form->addRow("密码:", pwEdit_);
     form->addRow("压缩级别:", levelSpin_);
+    form->addRow("分卷大小:", volCombo_);
 
     auto* buttons =
         new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -293,3 +299,7 @@ QStringList CreateArchiveDialog::inputs() const {
 QString CreateArchiveDialog::archivePath() const { return outEdit_->text().trimmed(); }
 QString CreateArchiveDialog::password() const { return pwEdit_->text(); }
 int CreateArchiveDialog::level() const { return levelSpin_->value(); }
+QString CreateArchiveDialog::volumeSize() const {
+    const QString t = volCombo_->currentText().trimmed();
+    return (t.isEmpty() || t == "不分卷") ? QString() : t;
+}

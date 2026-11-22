@@ -23,6 +23,7 @@ struct CreateOptions {
     std::wstring password;   // 7z/zip 支持
     int level = 5;           // 0~9
     int threads = 0;         // 0 = 自动（交给引擎）
+    std::wstring volumeSize; // 分卷大小，如 "100m"/"1g"；空 = 不分卷（产生 .001/.002...）
 };
 
 class IEngine {

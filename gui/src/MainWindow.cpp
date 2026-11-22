@@ -241,12 +241,14 @@ void MainWindow::startCreate() {
     std::vector<std::wstring> inputs;
     for (const QString& s : dlg.inputs()) inputs.push_back(toW(s));
     std::wstring wpw = toW(dlg.password());
+    std::wstring wvol = toW(dlg.volumeSize());
     const int level = dlg.level();
-    runner_->start([this, warc, inputs, wpw, level](const std::atomic_bool& cancel,
+    runner_->start([this, warc, inputs, wpw, wvol, level](const std::atomic_bool& cancel,
                                                     const ProgressRunner::OnProgress& prog) {
         ggzip::CreateOptions opt;
         opt.password = wpw;
         opt.level = level;
+        opt.volumeSize = wvol;
         ggzip::ProgressFn pfn = [&prog](const ggzip::Progress& p) { prog(p.percent); };
         engine_->create(warc, inputs, opt, pfn, cancel);
         opResult_ = warc;

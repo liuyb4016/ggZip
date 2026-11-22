@@ -62,6 +62,7 @@ public:
     QString archivePath() const;
     QString password() const;
     int level() const;
+    QString volumeSize() const;  // 空 = 不分卷
 
 private:
     void addFiles();
@@ -73,5 +74,6 @@ private:
     QLineEdit* pwEdit_;
     QComboBox* pwPreset_ = nullptr;
     std::vector<ggzip::PasswordEntry> stored_;
+    QComboBox* volCombo_;
     QSpinBox* levelSpin_;
 };
