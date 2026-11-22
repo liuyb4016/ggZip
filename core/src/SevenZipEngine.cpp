@@ -268,9 +268,11 @@ void SevenZipEngine::create(const std::wstring& archive,
     }
 
     std::wstring type = archiveTypeFromExt(archive);
+    const bool isSfx = (lowerExtOf(archive) == L".exe");
+    if (type.empty() && isSfx) type = L"7z";   // .exe -> 7z 自解压包（-sfx）
     if (type.empty())
         throw ArchiveError("不支持的压缩格式: " + utf8(archive) +
-                    "（当前支持 7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz 等）");
+                    "（当前支持 7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz / exe(SFX) 等）");
 
     // 单文件流格式（非 tar 包装）只支持单文件输入
     if ((type == L"gzip" || type == L"bzip2" || type == L"xz" || type == L"zstd") &&
@@ -292,6 +294,7 @@ void SevenZipEngine::create(const std::wstring& archive,
     std::vector<std::wstring> args{ L"a", archive, L"-t" + type, L"-y",
         L"-mx" + std::to_wstring(opt.level < 0 ? 5 : opt.level) };
     if (!opt.volumeSize.empty()) args.push_back(L"-v" + opt.volumeSize);
+    if (isSfx) args.push_back(L"-sfx");
     if (opt.threads > 0) args.push_back(L"-mmt" + std::to_wstring(opt.threads));
     if (!opt.password.empty()) {
         args.push_back(L"-p" + opt.password);

@@ -184,8 +184,8 @@ PreviewDialog::PreviewDialog(const QPixmap& pixmap, const QString& fileName,
 
 namespace {
 const wchar_t* kSaveFilter =
-    L"7z (*.7z);;zip (*.zip);;tar (*.tar);;tar.gz (*.tar.gz);;tar.bz2 (*.tar.bz2);;"
-    L"tar.xz (*.tar.xz);;gzip (*.gz);;xz (*.xz);;所有文件 (*)";
+    L"7z (*.7z);;zip (*.zip);;自解压包 (*.exe);;tar (*.tar);;tar.gz (*.tar.gz);;"
+    L"tar.bz2 (*.tar.bz2);;tar.xz (*.tar.xz);;gzip (*.gz);;xz (*.xz);;所有文件 (*)";
 } // namespace
 
 CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {

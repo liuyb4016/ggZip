@@ -210,7 +210,30 @@ int wmain() {
             check(readBin(vout / "big.bin") == big, "分卷解压回读 big.bin");
         }
 
-        // 7) 智能解压决策
+        // 8) SFX 自解压（引擎目录无 SFX 模块时跳过——CI 用完整版 7-Zip 覆盖）
+        {
+            const fs::path engineDir =
+                fs::path(engine->enginePath()).parent_path();
+            const bool sfxCapable =
+                fs::exists(engineDir / L"7zCon.sfx") || fs::exists(engineDir / L"7z.sfx");
+
+            if (!sfxCapable) {
+                std::printf("  [SKIP] SFX 测试（引擎目录缺少 SFX 模块，CI 覆盖）\n");
+            } else {
+                std::wstring sfx = (root / L"sfx.exe").wstring();
+                ggzip::CreateOptions so;
+                so.level = 1;
+                engine->create(sfx, { src.wstring() + L"\\*" }, so, kNoProgress, g_cancel);
+                check(fs::exists(sfx), "SFX 自解压包创建");
+
+                fs::path sout = root / "outsfx";
+                fs::create_directories(sout);
+                engine->extract(sfx, sout.wstring(), {}, {}, kNoProgress, g_cancel);
+                check(readBin(sout / "hello.txt") == "hello ggzip\n", "SFX 解包回读");
+            }
+        }
+
+        // 9) 智能解压决策
         {
             fs::path srcA = root / "srcA";
             writeBin(srcA / "data" / "f1.txt", "A\n");
