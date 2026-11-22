@@ -211,6 +211,17 @@ static void checkLine(bool ok, const std::wstring& line, const std::string& msg)
     check(ok, ok ? msg : msg + " | 实际: " + toUtf8(line));
 }
 
+// UTF-16 码元十六进制转储：暴露不可见字符与真实内容
+static std::string hexOf(const std::wstring& w) {
+    std::string s;
+    char buf[8];
+    for (wchar_t c : w) {
+        std::snprintf(buf, sizeof(buf), "%04x ", static_cast<unsigned>(c));
+        s += buf;
+    }
+    return s;
+}
+
 static std::wstring quoteArg(const std::wstring& s) {
     return L"\"" + s + L"\"";
 }
@@ -367,8 +378,14 @@ int wmain(int argc, wchar_t** argv) {
         check(r.used == 2, "目录背景应有 2 个菜单项");
         check(labelsContain(r, L"添加到 \"ggzip_shell_test.7z\""), "背景模式基名为目录名");
         const std::wstring line = invokeDry(m, 0, dryFile);
-        checkLine(hasAll(line, { L"create", dir + L"\\ggzip_shell_test.7z" }),
-                  line, "背景模式创建命令行正确");
+        const std::wstring want = dir + L"\\ggzip_shell_test.7z";
+        const bool ok = hasAll(line, { L"create", want });
+        if (ok) check(true, "背景模式创建命令行正确");
+        else {
+            check(false, "背景模式创建命令行正确 | 期望含: " + toUtf8(want) +
+                             " | dir_hex: " + hexOf(dir) +
+                             " | 实际_hex: " + hexOf(line));
+        }
     }
 
     // 5.5 可选 E2E：--e2e 且 ggz 路径真实存在
