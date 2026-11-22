@@ -162,7 +162,7 @@ static std::wstring invokeDry(IContextMenu* m, UINT index, const std::wstring& d
     ci.cbSize = sizeof(ci);
     ci.lpVerb = MAKEINTRESOURCEA(1 + index);
     if (FAILED(m->InvokeCommand(&ci))) return L"<invoke failed>";
-    for (int i = 0; i < 250 && GetFileAttributesW(dryFile.c_str()) == INVALID_FILE_ATTRIBUTES; ++i)
+    for (int i = 0; i < 500 && GetFileAttributesW(dryFile.c_str()) == INVALID_FILE_ATTRIBUTES; ++i)
         Sleep(20);
     FILE* f = _wfopen(dryFile.c_str(), L"rb");
     if (f == nullptr) return L"<no dry-run output>";
@@ -186,6 +186,20 @@ static bool hasAll(const std::wstring& line, const std::vector<std::wstring>& pa
     for (const auto& p : parts)
         if (line.find(p) == std::wstring::npos) return false;
     return true;
+}
+
+static std::string toUtf8(const std::wstring& w) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0,
+                                      nullptr, nullptr);
+    std::string s(n > 1 ? n - 1 : 0, '\0');
+    if (n > 1)
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+// 断言命令行包含各部分；失败时把实际内容打出来便于诊断
+static void checkLine(bool ok, const std::wstring& line, const std::string& msg) {
+    check(ok, ok ? msg : msg + " | 实际: " + toUtf8(line));
 }
 
 static std::wstring quoteArg(const std::wstring& s) {
@@ -294,11 +308,11 @@ int wmain(int argc, wchar_t** argv) {
         check(labelsContain(r, L"解压到当前文件夹"), "含解压到当前文件夹");
         check(labelsContain(r, L"解压到 \"a"), "含解压到同名文件夹");
         const std::wstring line = invokeDry(m, 0, dryFile);
-        check(hasAll(line, { L"smart-extract", aZip, L"-o " + dir }),
-              "智能解压命令行正确");
+        checkLine(hasAll(line, { L"smart-extract", aZip, L"-o " + dir }), line,
+                  "智能解压命令行正确");
         const std::wstring line2 = invokeDry(m, 2, dryFile);
-        check(hasAll(line2, { L"extract", aZip, L"-o " + dir + L"\\a\n" }),
-              "解压到子文件夹命令行正确");
+        checkLine(hasAll(line2, { L"extract", aZip, L"-o " + dir + L"\\a\n" }), line2,
+                  "解压到子文件夹命令行正确");
         // GetCommandString（此时 m_items[0] = 智能解压）
         wchar_t wverb[64]{};
         const HRESULT hr1 = m->GetCommandString(0, GCS_VERBW, nullptr,
@@ -319,8 +333,8 @@ int wmain(int argc, wchar_t** argv) {
         check(labelsContain(r, L"添加到 \"doc.7z\""), "含添加到 doc.7z");
         check(labelsContain(r, L"添加到 \"doc.zip\""), "含添加到 doc.zip");
         const std::wstring line = invokeDry(m, 0, dryFile);
-        check(hasAll(line, { L"create", dir + L"\\doc.7z", docTxt, photoJpg }),
-              "创建 7z 命令行正确");
+        checkLine(hasAll(line, { L"create", dir + L"\\doc.7z", docTxt, photoJpg }),
+                  line, "创建 7z 命令行正确");
     }
 
     // 4. 场景 C：压缩包 + 普通文件混选 → 4 项（解压组 2 项 + 压缩组 2 项；
@@ -344,8 +358,8 @@ int wmain(int argc, wchar_t** argv) {
         check(r.used == 2, "目录背景应有 2 个菜单项");
         check(labelsContain(r, L"添加到 \"ggzip_shell_test.7z\""), "背景模式基名为目录名");
         const std::wstring line = invokeDry(m, 0, dryFile);
-        check(hasAll(line, { L"create", dir + L"\\ggzip_shell_test.7z" }),
-              "背景模式创建命令行正确");
+        checkLine(hasAll(line, { L"create", dir + L"\\ggzip_shell_test.7z" }),
+                  line, "背景模式创建命令行正确");
     }
 
     // 5.5 可选 E2E：--e2e 且 ggz 路径真实存在

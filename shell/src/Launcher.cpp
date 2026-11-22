@@ -64,8 +64,10 @@ void runOne(const std::wstring& exe, const std::vector<std::wstring>& args) {
 }
 
 void dryRun(const wchar_t* file, const std::wstring& line) {
-    // 以 UTF-8 追加，一行一条命令，供测试宿主断言
-    if (FILE* f = _wfopen(file, L"ab")) {
+    // 以 UTF-8 追加，一行一条命令，供测试宿主断言。
+    // 先写临时名再原子改名：避免读到半截内容（测试侧以“文件出现”为完成信号）
+    std::wstring tmp = std::wstring(file) + L".tmp";
+    if (FILE* f = _wfopen(tmp.c_str(), L"ab")) {
         int len = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), -1, nullptr, 0,
                                       nullptr, nullptr);
         if (len > 1) {
@@ -76,6 +78,7 @@ void dryRun(const wchar_t* file, const std::wstring& line) {
             fwrite("\n", 1, 1, f);
         }
         fclose(f);
+        MoveFileExW(tmp.c_str(), file, MOVEFILE_REPLACE_EXISTING);
     }
 }
 
