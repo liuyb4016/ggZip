@@ -131,51 +131,16 @@ int cmdList(ggzip::IEngine& e, const Args& a) {
     return 0;
 }
 
-// tar.gz 等：7z 一次只解一层，若解出的只有单个 .tar，再解一层
-void maybeUnwrapTar(ggzip::IEngine& e, const std::wstring& archive,
-                    const std::wstring& outDir, const ggzip::ExtractOptions& opt) {
-    if (!ggzip::isTarWrappedExt(archive)) return;
-    std::error_code ec;
-    size_t count = 0;
-    fs::path only;
-    for (const auto& de : fs::directory_iterator(outDir, ec)) {
-        ++count;
-        if (count == 1) only = de.path();
-    }
-    if (count == 1) {
-        std::wstring ext = only.extension().wstring();
-        for (auto& c : ext) c = (wchar_t)std::towlower(c);
-        if (ext == L".tar") {
-            e.extract(only.wstring(), outDir, {}, opt, printProgress, g_cancel);
-            finishProgress();
-            if (!g_cancel.load()) fs::remove(only, ec);
-        }
-    }
-}
-
+// 解压（智能解压 / tar.* 双层解包逻辑在 core 的 extractSmart 中）
 int cmdExtract(ggzip::IEngine& e, const Args& a) {
     fs::path target = a.outDir.empty() ? fs::current_path() : fs::path(a.outDir);
     ggzip::ExtractOptions opt;
     opt.password = a.password;
 
-    std::wstring realOut = target.wstring();
-    if (a.smart) {
-        auto entries = e.list(a.archive);
-        auto d = ggzip::smartPlan(entries);
-        if (d.intoSubfolder) {
-            fs::path base = fs::path(a.archive).filename();
-            while (base.has_extension()) base = base.stem();
-            std::wstring name =
-                ggzip::dedupeFolderName(target.wstring(), base.wstring());
-            realOut = (target / name).wstring();
-        }
-    }
-    std::error_code ec;
-    fs::create_directories(realOut, ec);
-    e.extract(a.archive, realOut, {}, opt, printProgress, g_cancel);
+    auto realOut = ggzip::extractSmart(e, a.archive, target.wstring(), a.smart,
+                                       opt, printProgress, g_cancel);
     finishProgress();
     if (g_cancel.load()) { errln("已取消"); return 3; }
-    maybeUnwrapTar(e, a.archive, realOut, opt);
     outln("已解压到: " + ggzip::utf8(realOut));
     return 0;
 }

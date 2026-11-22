@@ -1,6 +1,12 @@
 #include "ggzip/SmartExtract.h"
+#include "ggzip/ArchiveError.h"
 #include <windows.h>
+#include <algorithm>
+#include <cwctype>
+#include <filesystem>
 #include <set>
+
+namespace fs = std::filesystem;
 
 namespace ggzip {
 
@@ -28,6 +34,53 @@ SmartDecision smartPlan(const std::vector<Entry>& entries) {
     SmartDecision d;
     d.intoSubfolder = hasAny && !(topDirs.size() == 1 && !topLevelFiles);
     return d;
+}
+
+std::wstring extractSmart(const IEngine& engine, const std::wstring& archive,
+                          const std::wstring& outDir, bool smart,
+                          const ExtractOptions& opt, const ProgressFn& onProgress,
+                          const std::atomic_bool& cancel) {
+    std::wstring target = outDir;
+    if (smart) {
+        auto entries = engine.list(archive);
+        auto d = smartPlan(entries);
+        if (d.intoSubfolder) {
+            // 以压缩包名（去掉全部扩展名）作为子文件夹名
+            std::wstring name = fs::path(archive).filename().wstring();
+            while (true) {
+                auto dot = name.rfind(L'.');
+                if (dot == std::wstring::npos || dot == 0) break;
+                name = name.substr(0, dot);
+            }
+            if (name.empty()) name = L"extracted";
+            target = outDir + L"\\" + dedupeFolderName(outDir, name);
+        }
+    }
+    std::error_code ec;
+    fs::create_directories(fs::path(target), ec);
+
+    engine.extract(archive, target, {}, opt, onProgress, cancel);
+    if (cancel.load()) return target;
+
+    // tar.* 两层格式：7z 一次只解一层，若解出的只有单个 .tar，再解一层
+    if (isTarWrappedExt(archive)) {
+        size_t count = 0;
+        fs::path only;
+        for (const auto& de : fs::directory_iterator(fs::path(target), ec)) {
+            ++count;
+            if (count == 1) only = de.path();
+        }
+        if (count == 1) {
+            std::wstring ext = only.extension().wstring();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](wchar_t c) { return (wchar_t)std::towlower(c); });
+            if (ext == L".tar") {
+                engine.extract(only.wstring(), target, {}, opt, onProgress, cancel);
+                if (!cancel.load()) fs::remove(only, ec);
+            }
+        }
+    }
+    return target;
 }
 
 std::wstring dedupeFolderName(const std::wstring& parentDir,

@@ -2,7 +2,17 @@
 
 Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/bandizip)：压缩包浏览器、智能解压、右键 Shell 集成、加密等。
 
-## v0.1.0 已实现（核心引擎 + CLI）
+## 已实现
+
+### v0.2.0 —— Qt GUI 压缩包浏览器（M1）
+
+- **主窗口**：菜单/工具栏/拖拽打开压缩包；条目表格（名称/大小/压缩后/类型，目录排前）；UTF-8 中文路径与文件名正常显示
+- **解压到 / 智能解压到**：智能解压为 Bandizip 行为（单根目录直接解压，否则自动建子文件夹）；支持密码
+- **新建压缩包**：多选文件与文件夹、输出格式按扩展名（7z/zip/tar/gz/bz2/xz/zst/tar.gz 等）、压缩级别 1-9、密码加密
+- **后台执行**：操作在独立线程运行，进度对话框可取消；结果/错误经队列信号回传 GUI 线程
+- 基于 Qt6 Widgets（6.9.3 LTS 验证通过），MSVC 与 MinGW 双工具链编译回归通过
+
+### v0.1.0 —— 核心引擎 + CLI
 
 - **引擎**：基于 7z.exe 子进程。自动定位顺序：环境变量 `GGZIP_7Z` → 程序同目录（便携分发）→ `PATH` → `C:\Program Files\7-Zip`
 - **创建**：7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz（tar.* 自动两段式打包）
@@ -23,6 +33,21 @@ cmake --build build
 ```
 
 产物：`build\ggz.exe`（命令行）、`build\ggzip_smoke.exe`（测试）。
+
+### 构建 GUI（可选，需要 Qt6）
+
+```bat
+cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 ^
+      -DGGZ_BUILD_GUI=ON -DCMAKE_PREFIX_PATH=C:/Qt/6.9.3/msvc2022_64
+cmake --build build-msvc --config Release
+```
+
+运行时需 Qt DLL 在 PATH 中：
+
+```bat
+set PATH=C:\Qt\6.9.3\msvc2022_64\bin;%PATH%
+build-msvc\gui\Release\ggzip_gui.exe [可选：压缩包路径]
+```
 
 ## 运行测试
 
@@ -49,10 +74,10 @@ ggz where
 
 ```
 core/   纯 C++20 核心库（无 UI 依赖）：引擎抽象 IEngine、7z.exe 驱动、
-        进程管理、智能解压决策、格式识别
+        进程管理、智能解压（决策 + 执行 extractSmart）、格式识别
 cli/    ggz 命令行工具
-gui/    Qt Widgets GUI（v0.2）
-shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt）（v0.3）
+gui/    Qt Widgets GUI：压缩包浏览器、解压/压缩对话框、后台任务桥（v0.2）
+shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt）（开发中）
 ```
 
 核心库只依赖 C++20 标准库与 Win32，便于后续被 GUI、Shell 扩展、CLI 复用。
@@ -60,7 +85,7 @@ shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt）（v0.3）
 ## 路线图
 
 - [x] M0/v0.1 —— 核心引擎 + CLI + 智能解压 + 冒烟测试
-- [ ] M1/v0.2 —— Qt GUI：压缩包浏览器（列表/预览）、解压与压缩对话框、设置
+- [x] M1/v0.2 —— Qt GUI：压缩包浏览器（列表/解压/压缩/智能解压/进度取消）
 - [ ] M2/v0.3 —— Windows 右键菜单 Shell 扩展（经典菜单 + 文件关联图标）
 - [ ] M3 —— 密码管理器（DPAPI）、分卷压缩、SFX 自解压包、图片不解压预览
 - [ ] M4 —— Win11 新式右键菜单（IExplorerCommand）、安装包（Inno Setup）、多语言

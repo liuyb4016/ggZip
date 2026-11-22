@@ -8,7 +8,7 @@ add_library(ggzip_core STATIC
 )
 target_include_directories(ggzip_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(ggzip_core PUBLIC UNICODE _UNICODE)
-target_compile_definitions(ggzip_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_definitions(ggzip_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 
 if(MSVC)
     target_compile_options(ggzip_core PRIVATE /W4 /utf-8 /permissive-)

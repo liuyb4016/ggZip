@@ -169,7 +169,7 @@ void SevenZipEngine::runWithProgress(std::vector<std::wstring> args,
     args.push_back(L"-sccUTF-8");
     args.push_back(L"-bsp1");
     std::string cmdDebug = utf8(exe_);
-    for (const auto& a : args) { cmdDebug += " \"" + utf8(a) + "\""; }
+    for (const auto& arg : args) { cmdDebug += " \"" + utf8(arg) + "\""; }
     std::string buf;
     double last = -1;
     proc::RunResult r = proc::run(exe_, args, [&](std::string_view c) {
