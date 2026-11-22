@@ -12,6 +12,17 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
 - **后台执行**：操作在独立线程运行，进度对话框可取消；结果/错误经队列信号回传 GUI 线程
 - 基于 Qt6 Widgets（6.9.3 LTS 验证通过），MSVC 与 MinGW 双工具链编译回归通过
 
+### v0.3.0 —— M3：密码管理器 / 分卷 / SFX
+
+- **密码管理器**：密码以 DPAPI（当前用户作用域）加密存储于 `%APPDATA%\ggZip\passwords.dat`；
+  CLI `ggz pass list / add <标签> -p <密码> / remove <标签>`；
+  GUI 「设置-密码管理器」增删管理，解压/创建对话框提供「从密码库」下拉一键填充
+- **分卷压缩**：创建对话框选择分卷大小（10m/50m/100m/500m/1g，可自定义），7z 分卷 `.001/.002...`；
+  解压/列表/测试直接给基础名（`a.7z`）即可——引擎自动解析首卷
+- **SFX 自解压包**：保存为 `.exe`（7z `-sfx`）；需要完整版 7-Zip（含 SFX 模块），便携 7za 不支持
+- **文本预览**：双击 txt/md/log/代码等文本条目弹窗预览（等宽字体、前 100KB 截断提示），
+  BOM/UTF-8/GBK 自动识别
+
 ### v0.2.1 —— 浏览器增强
 
 - **目录导航**：双击目录进入；"上级"按钮 / Alt+Up 返回；导航栏显示当前路径
@@ -96,7 +107,11 @@ ggz extract archive.7z -o D:\out
 ggz smart-extract tool.tar.gz -o D:\tools
 ggz create backup.7z D:\docs --level 7 --threads 8
 ggz create secret.zip D:\docs -p MyPassword
+ggz create split.7z D:\docs --volume 100m
 ggz test archive.zip
+ggz pass list
+ggz pass add backup.7z -p MyPassword
+ggz pass remove backup.7z
 ggz where
 ```
 
@@ -118,7 +133,7 @@ shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt/core）：�
 - [x] M0/v0.1 —— 核心引擎 + CLI + 智能解压 + 冒烟测试
 - [x] M1/v0.2 —— Qt GUI：压缩包浏览器（列表/解压/压缩/智能解压/进度取消）
 - [ ] M2/v0.3 —— Windows 右键菜单 Shell 扩展（经典菜单已完成并带 E2E 测试；文件关联图标待做）
-- [ ] M3 —— 密码管理器（DPAPI）、分卷压缩、SFX 自解压包
+- [x] M3/v0.3 —— 密码管理器（DPAPI）、分卷压缩、SFX 自解压、文本/图片不解压预览
 - [ ] M4 —— Win11 新式右键菜单（IExplorerCommand）、安装包（Inno Setup）、多语言
 
 ## 许可

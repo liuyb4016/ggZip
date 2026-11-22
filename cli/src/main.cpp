@@ -69,7 +69,8 @@ const char* kUsage =
     "  ggz list <压缩包>                                  列出内容\n"
     "  ggz extract <压缩包> [-o 目录] [-p 密码]            解压\n"
     "  ggz smart-extract <压缩包> [-o 目录] [-p 密码]      智能解压\n"
-    "  ggz create <压缩包> <输入...> [-p 密码] [--level N] [--threads N]  压缩\n"
+    "  ggz create <压缩包> <输入...> [-p 密码] [--level N] [--threads N]\n"
+    "         [--volume 大小]                              压缩（--volume 100m 为分卷）\n"
     "  ggz test <压缩包> [-p 密码]                        完整性测试\n"
     "  ggz pass list | add <标签> -p <密码> | remove <标签>   密码库管理（DPAPI 加密）\n"
     "  ggz where                                          显示压缩引擎路径\n"
@@ -86,6 +87,7 @@ struct Args {
     std::wstring archive;
     std::wstring outDir;
     std::wstring password;
+    std::wstring volumeSize;   // 分卷大小（create），如 100m；空 = 不分卷
     std::vector<std::wstring> inputs;
     int level = 5;
     int threads = 0;
@@ -101,6 +103,7 @@ bool parseArgs(int argc, wchar_t** argv, std::wstring& cmd, Args& a) {
     for (int i = 2; i < argc; ++i) {
         std::wstring s = argv[i];
         if (s == L"--smart") { a.smart = true; }
+        else if (s == L"--volume" && i + 1 < argc) { a.volumeSize = argv[++i]; }
         else if (s == L"--level" && i + 1 < argc) { a.level = _wtoi(argv[++i]); }
         else if (s == L"--threads" && i + 1 < argc) { a.threads = _wtoi(argv[++i]); }
         else if (s == L"-o" && i + 1 < argc) { a.outDir = argv[++i]; }
@@ -152,6 +155,7 @@ int cmdCreate(ggzip::IEngine& e, const Args& a) {
     opt.password = a.password;
     opt.level = a.level;
     opt.threads = a.threads;
+    opt.volumeSize = a.volumeSize;
     e.create(a.archive, a.inputs, opt, printProgress, g_cancel);
     finishProgress();
     if (g_cancel.load()) { errln("已取消"); return 3; }
@@ -245,7 +249,7 @@ int wmain(int argc, wchar_t** argv) {
             return 0;
         }
         if (cmd == L"version" || cmd == L"--version") {
-            outln("ggz (ggZip) 0.2.1");
+            outln("ggz (ggZip) 0.3.0");
             return 0;
         }
         outln(kUsage);
