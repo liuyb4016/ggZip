@@ -300,9 +300,20 @@ int wmain(int argc, wchar_t** argv) {
     wchar_t tmpRoot[MAX_PATH];
     GetTempPathW(MAX_PATH, tmpRoot);
     std::error_code ec;
-    const std::wstring dir = std::wstring(tmpRoot) + L"ggzip_shell_test";
+    std::wstring dir = std::wstring(tmpRoot) + L"ggzip_shell_test";
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
+    // 用 Explorer 规范化路径：CI runner 的 TEMP 是 8.3 短名（RUNNER~1），
+    // 而 SHGetPathFromIDListW 返回长名，断言必须与显示名同空间
+    {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(dir.c_str(), nullptr, &pidl, 0, nullptr)) &&
+            pidl != nullptr) {
+            wchar_t canon[MAX_PATH];
+            if (SHGetPathFromIDListW(pidl, canon)) dir = canon;
+            CoTaskMemFree(pidl);
+        }
+    }
     const std::wstring aZip = dir + L"\\a.zip";
     const std::wstring docTxt = dir + L"\\doc.txt";
     const std::wstring photoJpg = dir + L"\\photo.jpg";
