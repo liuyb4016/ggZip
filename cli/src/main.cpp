@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
+#include <cwctype>
 #include <filesystem>
 #include <mutex>
 #include <string>

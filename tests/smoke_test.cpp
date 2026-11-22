@@ -9,6 +9,7 @@
 #include "ggzip/Text.h"
 #include <atomic>
 #include <cstdio>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <random>
