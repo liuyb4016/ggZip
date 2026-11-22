@@ -1,0 +1,105 @@
+name: Nightly
+
+# 每天北京时间 05:00 自动构建 main 并发布 nightly 预发布版本；
+# 自最近一次 nightly 以来没有新提交时自动跳过。
+on:
+  schedule:
+    - cron: '0 21 * * *'   # UTC 21:00 = 北京时间 05:00
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '无新提交时也强制构建发布'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: 检查是否有新提交
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: 与最近一次 nightly 比较
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            echo "手动触发且 force=true，直接构建"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '[.[] | select(.tag_name | startswith("nightly-"))][0].target_commitish // ""')"
+          if [ -n "$last" ] && [ "$last" = "${{ github.sha }}" ]; then
+            echo "自最近一次 nightly 以来没有新提交，跳过本次构建"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  nightly:
+    name: 构建并发布 nightly
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算日期（北京时间）
+        id: meta
+        shell: bash
+        run: echo "date=$(TZ=Asia/Shanghai date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DGGZ_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Smoke test
+        shell: pwsh
+        env:
+          GGZIP_7Z: C:\Program Files\7-Zip\7z.exe
+        run: |
+          & .\build\tests\Release\ggzip_smoke.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 打包
+        shell: pwsh
+        env:
+          DATE: ${{ steps.meta.outputs.date }}
+        run: |
+          $stage = "stage/ggZip-nightly-$env:DATE-win64"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item .\build\cli\Release\ggz.exe $stage\
+          Copy-Item README.md, LICENSE $stage\
+          Compress-Archive -Path $stage -DestinationPath "ggZip-nightly-$env:DATE-win64.zip"
+
+      - name: 发布 nightly Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATE: ${{ steps.meta.outputs.date }}
+        run: |
+          TAG="nightly-$DATE"
+          ZIP="ggZip-nightly-$DATE-win64.zip"
+          # 同日重跑（如手动强制触发）时先删除旧发布和标签
+          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag
+          {
+            echo "### ggZip 夜间构建"
+            echo
+            echo "- 提交：${GITHUB_SHA:0:7} $(git log -1 --pretty=%s)"
+            echo "- 构建：MSVC x64 Release，smoke 测试通过"
+            echo "- 时间：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')（北京时间）"
+            echo
+            echo "每天北京时间 05:00 自动构建 main 分支；有新提交才会发布新版本。"
+          } > notes.md
+          gh release create "$TAG" "$ZIP" --title "ggZip nightly $DATE" --notes-file notes.md --prerelease
