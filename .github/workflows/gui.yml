@@ -1,0 +1,70 @@
+name: GUI CI
+
+on:
+  push:
+    paths:
+      - "gui/**"
+      - "core/**"
+      - "cli/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/gui.yml"
+  pull_request:
+    paths:
+      - "gui/**"
+      - "core/**"
+      - "cli/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/gui.yml"
+  workflow_dispatch:
+
+jobs:
+  windows-gui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 6.9.3 (aqtinstall)
+        shell: pwsh
+        run: |
+          python -m pip install --quiet aqtinstall
+          python -m aqt install-qt windows desktop 6.9.3 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE\Qt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Configure
+        run: cmake -S . -B build-gui -A x64 -DGGZ_BUILD_GUI=ON -DGGZ_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.9.3/msvc2022_64
+
+      - name: Build
+        run: cmake --build build-gui --config Release
+
+      - name: Smoke test (core + cli)
+        shell: pwsh
+        env:
+          GGZIP_7Z: C:\Program Files\7-Zip\7z.exe
+        run: |
+          & .\build-gui\tests\Release\ggzip_smoke.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: GUI selftest
+        shell: pwsh
+        env:
+          GGZIP_7Z: C:\Program Files\7-Zip\7z.exe
+        run: |
+          $env:PATH = "$env:GITHUB_WORKSPACE\Qt\6.9.3\msvc2022_64\bin;" + $env:PATH
+          & .\build-gui\gui\Release\ggzip_gui.exe --selftest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Collect portable dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item build-gui\gui\Release\ggzip_gui.exe dist\
+          Copy-Item build-gui\cli\Release\ggz.exe dist\
+          & "$env:GITHUB_WORKSPACE\Qt\6.9.3\msvc2022_64\bin\windeployqt.exe" --no-translations --compiler-runtime dist\ggzip_gui.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload artifact (不含 7z.exe，请自行安装 7-Zip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ggzip-gui-portable
+          path: dist/
+          retention-days: 14
