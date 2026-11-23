@@ -15,6 +15,9 @@ struct Entry {
     std::uint32_t crc32 = 0;
     std::string modified;     // 原始时间字符串，如 "2024-01-01 10:00:00"
     std::string method;
+    bool isLink = false;
+    bool sizeKnown = true;
+    bool crcKnown = false;
 };
 
 struct ArchiveInfo {

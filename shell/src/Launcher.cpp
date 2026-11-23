@@ -21,12 +21,15 @@ bool fileExists(const std::wstring& p) {
 
 // 参数按 Windows 规则加引号（路径含空格时必需）
 std::wstring quote(const std::wstring& s) {
-    if (!s.empty() && s.find_first_of(L" \t\"") == std::wstring::npos) return s;
     std::wstring r = L"\"";
+    std::size_t backslashes = 0;
     for (const wchar_t c : s) {
-        if (c == L'"') r += L"\\\"";
+        if (c == L'\\') { ++backslashes; continue; }
+        r.append(c == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
+        backslashes = 0;
         r += c;
     }
+    r.append(backslashes * 2, L'\\');
     return r + L"\"";
 }
 
@@ -43,7 +46,7 @@ void runOne(const std::wstring& exe, const std::vector<std::wstring>& args) {
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
+    si.wShowWindow = !args.empty() && args[0] == L"--shell-action" ? SW_SHOWNORMAL : SW_HIDE;
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
                         CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
@@ -122,7 +125,15 @@ void launchAsync(const std::wstring& exe,
             std::wstring line = exe;
             for (const auto& a : args) line += L" " + a;
             if (isDry) dryRun(dry, line);
-            else runOne(exe, args);
+            else {
+                wchar_t explicitCli[2]{};
+                const std::wstring gui = parentOf(exe) + L"\\ggzip_gui.exe";
+                if (!GetEnvironmentVariableW(L"GGZIP_GGZ", explicitCli, 2) && fileExists(gui)) {
+                    std::vector<std::wstring> guiArguments{L"--shell-action"};
+                    guiArguments.insert(guiArguments.end(), args.begin(), args.end());
+                    runOne(gui, guiArguments);
+                } else runOne(exe, args);
+            }
         }
     }).detach();
 }

@@ -71,6 +71,9 @@ foreach ($destination in @($stage, $zipPath, $setupPath)) {
 }
 $windeployqt = Join-Path $QtDir 'bin/windeployqt.exe'
 if (-not (Test-Path -LiteralPath $windeployqt -PathType Leaf)) { throw "Qt deployment tool not found: $windeployqt" }
+if (-not (Test-Path -LiteralPath (Join-Path $QtDir 'plugins/imageformats/qwebp.dll') -PathType Leaf)) {
+    throw 'Qt Image Formats is required to deploy WebP. Install the matching qtimageformats development module.'
+}
 if (-not $IsccPath) {
     $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
     if ($iscc) { $IsccPath = $iscc.Source }
@@ -113,6 +116,7 @@ try {
     }
     New-Item -ItemType Directory -Path $stage | Out-Null
     Copy-Item -LiteralPath (Join-Path $BuildDir 'gui/Release/ggzip_gui.exe') -Destination $stage
+    Copy-Item -LiteralPath (Join-Path $BuildDir 'gui/Release/ggzip_preview_worker.exe') -Destination $stage
     Copy-Item -LiteralPath $cliExe, $shellDll -Destination $stage
     $bundledEngineDir = Join-Path $stage '7z'
     New-Item -ItemType Directory -Path $bundledEngineDir | Out-Null
@@ -125,6 +129,22 @@ try {
     Invoke-Native $windeployqt @('--release', '--no-translations', '--no-compiler-runtime', $guiExe)
     Get-ChildItem -LiteralPath $RuntimeDir -Filter '*.dll' -File |
         Copy-Item -Destination $stage
+    if (-not (Test-Path -LiteralPath (Join-Path $stage 'imageformats/qwebp.dll') -PathType Leaf)) {
+        throw 'The deployed image plugins do not include WebP.'
+    }
+    $codecTest = Join-Path $stage 'ggzip_gui_regression_test.exe'
+    Copy-Item -LiteralPath (Join-Path $BuildDir 'gui/Release/ggzip_gui_regression_test.exe') -Destination $codecTest
+    try {
+        $codecProcess = Start-Process -FilePath $codecTest -ArgumentList '--deployed' -WindowStyle Hidden -PassThru
+        if (-not $codecProcess.WaitForExit(120000)) {
+            $codecProcess.Kill()
+            throw 'Deployed codec regression timed out.'
+        }
+        if ($codecProcess.ExitCode -ne 0) { throw "Deployed codec regression failed: $($codecProcess.ExitCode)" }
+        Write-Host 'Deployed image decoding and GUI-model regressions passed.'
+    } finally {
+        Remove-Item -LiteralPath $codecTest
+    }
     foreach ($binary in @($guiExe, (Join-Path $stage 'ggzip_shell.dll'))) {
         if ((Get-Item -LiteralPath $binary).VersionInfo.FileVersion -ne "$version.0") {
             throw "Binary version does not match VERSION: $binary"
@@ -144,6 +164,8 @@ try {
         Invoke-WebRequest -Uri "https://raw.githubusercontent.com/qt/qtbase/v$qtVersion/LICENSES/$license.txt" `
             -OutFile (Join-Path $licenses "Qt-$license.txt")
     }
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/qt/qtimageformats/v$qtVersion/src/3rdparty/libwebp/COPYING" `
+        -OutFile (Join-Path $licenses 'libwebp-COPYING.txt')
     $engineLicenses = Join-Path $licenses '7zip'
     $engineSources = Join-Path $stage 'sources/7zip'
     New-Item -ItemType Directory -Path $engineLicenses, $engineSources | Out-Null

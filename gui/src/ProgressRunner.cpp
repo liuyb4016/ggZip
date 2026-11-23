@@ -33,6 +33,7 @@ void ProgressRunner::run(WorkFn work) {
         err = QString::fromUtf8(e.what());
     }
     const bool cancelled = cancel_.load();
+    if (cancelled) err.clear();
     QMetaObject::invokeMethod(
         this,
         [this, ok, err, cancelled] {

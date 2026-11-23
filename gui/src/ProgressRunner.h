@@ -22,6 +22,7 @@ public:
     bool start(WorkFn work);
     bool isRunning() const { return running_.load(); }
     void requestCancel() { cancel_.store(true); }
+    void wait() { if (thread_.joinable()) thread_.join(); }
 
 signals:
     void progress(int percent);          // 0~100

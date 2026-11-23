@@ -6,14 +6,23 @@
 #include <string>
 #include <vector>
 #include "ggzip/Entry.h"
+#include "ggzip/IEngine.h"
+#include <QPointer>
+#include <QImage>
 
 class ArchiveTableModel;
 class ProgressRunner;
+class PreviewSession;
 class QLabel;
 class QProgressDialog;
 class QTableView;
 class QAction;
 class QModelIndex;
+class QCloseEvent;
+class QDialog;
+class QLineEdit;
+class QCheckBox;
+class QMenu;
 
 namespace ggzip { class IEngine; }
 
@@ -25,15 +34,17 @@ public:
 
     // 供命令行参数直接打开压缩包
     void openArchive(const QString& path);
+    void runShellAction(const QStringList& arguments);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
-    enum class Op { None, List, Extract, Create };
+    enum class Op { None, List, Extract, Create, Preview, Test };
 
-    void startExtract(bool smartDefault);
+    void startExtract(bool smartDefault, bool selectedOnly = false);
     void startCreate();
     void onOpFinished(bool ok, const QString& error);
     void onDoubleClicked(const QModelIndex& index);
@@ -41,9 +52,15 @@ private:
     void goUp();
     void updatePathUi();
     void setBaseStatus(const QString& text);
-    QString previewTempRoot();
     void warnEngineMissing();
     void updateActionStates();
+    ggzip::ConflictFn conflictResolver();
+    void showPreview();
+    void startTest();
+    bool requestArchivePassword();
+    void clearPassword();
+    void refreshRecentMenu();
+    void saveWindowSettings();
 
     std::unique_ptr<ggzip::IEngine> engine_;
     ProgressRunner* runner_ = nullptr;
@@ -57,13 +74,25 @@ private:
     QAction* actExtract_ = nullptr;
     QAction* actSmartExtract_ = nullptr;
     QAction* actCreate_ = nullptr;
+    QAction* actTest_ = nullptr;
+    QAction* actExtractSelected_ = nullptr;
+    QLineEdit* searchEdit_ = nullptr;
+    QCheckBox* searchAll_ = nullptr;
+    QMenu* recentMenu_ = nullptr;
+    QString sessionPassword_;
+    bool passwordRequired_ = false;
+    ggzip::Entry previewEntry_;
 
     Op currentOp_ = Op::None;
     QString currentArchive_;
     QString baseStatus_;
-    QString previewTempDir_;
-    int previewSeq_ = 0;
+    std::unique_ptr<PreviewSession> previewSession_;
     std::atomic_bool previewCancel_{ false };
     std::wstring opResult_;                    // 后台线程写入，finished 后 GUI 读取
+    ggzip::OperationSummary summary_;
+    bool summaryReady_ = false;
+    bool closePending_ = false;
+    QPointer<QDialog> activeConflict_;
+    QImage previewImage_;
     std::vector<ggzip::Entry> pendingEntries_; // 同上
 };

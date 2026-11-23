@@ -1,9 +1,27 @@
 #include "ArchiveTableModel.h"
 #include <algorithm>
+#include <set>
 
 ArchiveTableModel::ArchiveTableModel(QObject* parent) : QAbstractTableModel(parent) {}
 
 void ArchiveTableModel::setEntries(std::vector<ggzip::Entry> entries) {
+    memberCount_ = static_cast<int>(entries.size());
+    std::set<std::wstring> directories;
+    for (const auto& entry : entries) if (entry.isDir) directories.insert(entry.path);
+    std::vector<ggzip::Entry> inferred;
+    for (const auto& entry : entries) {
+        for (auto separator = entry.path.find(L'/'); separator != std::wstring::npos;
+             separator = entry.path.find(L'/', separator + 1)) {
+            const auto path = entry.path.substr(0, separator + 1);
+            if (directories.insert(path).second) {
+                ggzip::Entry directory;
+                directory.path = path;
+                directory.isDir = true;
+                inferred.push_back(std::move(directory));
+            }
+        }
+    }
+    entries.insert(entries.end(), inferred.begin(), inferred.end());
     all_ = std::move(entries);
     prefix_.clear();
     sortColumn_ = -1;
@@ -13,6 +31,7 @@ void ArchiveTableModel::setEntries(std::vector<ggzip::Entry> entries) {
 void ArchiveTableModel::clear() {
     beginResetModel();
     all_.clear();
+    memberCount_ = 0;
     view_.clear();
     prefix_.clear();
     sortColumn_ = -1;
@@ -22,6 +41,16 @@ void ArchiveTableModel::clear() {
 void ArchiveTableModel::setPrefix(const QString& prefix) {
     prefix_ = prefix;
     rebuildView();
+}
+
+void ArchiveTableModel::setSearch(const QString& query, bool wholeArchive) {
+    search_ = query.trimmed();
+    wholeArchive_ = wholeArchive;
+    rebuildView();
+}
+
+bool ArchiveTableModel::hasEncryptedEntries() const {
+    return std::any_of(all_.begin(), all_.end(), [](const auto& entry) { return entry.encrypted; });
 }
 
 QString ArchiveTableModel::displayPath() const {
@@ -37,17 +66,19 @@ const ggzip::Entry* ArchiveTableModel::entryAt(int row) const {
 void ArchiveTableModel::rebuildView() {
     beginResetModel();
     view_.clear();
-    const std::wstring wp = prefix_.toStdWString();
+    std::wstring wp = prefix_.toStdWString();
+    if (!wp.empty() && wp.back() == L'/') wp.pop_back();
     for (size_t i = 0; i < all_.size(); ++i) {
         std::wstring p = all_[i].path;
         if (!p.empty() && p.back() == L'/') p.pop_back();
         if (p.empty()) continue;
-        // 必须位于 prefix 之下
-        if (p.size() <= wp.size() || p.compare(0, wp.size(), wp) != 0) continue;
-        if (!wp.empty() && p[wp.size()] != L'/') continue;
-        // 且是直接子项（其余部分不再含 '/'）
-        const size_t restStart = wp.empty() ? 0 : wp.size() + 1;
-        if (p.find(L'/', restStart) != std::wstring::npos) continue;
+        if (!search_.isEmpty() && !QString::fromStdWString(p).contains(search_, Qt::CaseInsensitive)) continue;
+        if (search_.isEmpty() || !wholeArchive_) {
+            if (p.size() <= wp.size() || p.compare(0, wp.size(), wp) != 0) continue;
+            if (!wp.empty() && p[wp.size()] != L'/') continue;
+            const size_t restStart = wp.empty() ? 0 : wp.size() + 1;
+            if (p.find(L'/', restStart) != std::wstring::npos) continue;
+        }
         view_.push_back((int)i);
     }
     std::stable_sort(view_.begin(), view_.end(),

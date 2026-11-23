@@ -16,6 +16,12 @@ tree's `LICENSES` and `src/3rdparty` directories:
 - https://www.qt.io/licensing/open-source-lgpl-obligations
 - https://code.qt.io/cgit/qt/qtbase.git/tree/?h=v6.9.3
 - https://code.qt.io/cgit/qt/qtsvg.git/tree/?h=v6.9.3
+- https://code.qt.io/cgit/qt/qtimageformats.git/tree/?h=v6.9.3
+
+WebP decoding uses the matching Qt Image Formats plugin and its bundled
+libwebp component. The original libwebp BSD notice is included as
+`licenses/libwebp-COPYING.txt`. Packaging runs actual image decoding tests
+against the deployed plugins without falling back to the development Qt tree.
 
 You may replace compatible Qt shared libraries with your own builds.
 Do not prohibit reverse engineering for debugging modifications to those libraries.

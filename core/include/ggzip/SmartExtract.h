@@ -19,7 +19,7 @@ SmartDecision smartPlan(const std::vector<Entry>& entries);
 
 // 执行解压：smart 时按 smartPlan 决定实际目标目录；tar.* 自动解开内层 .tar。
 // 返回实际解压到的目录。
-std::wstring extractSmart(const IEngine& engine, const std::wstring& archive,
+OperationSummary extractSmart(const IEngine& engine, const std::wstring& archive,
                           const std::wstring& outDir, bool smart,
                           const ExtractOptions& opt, const ProgressFn& onProgress,
                           const std::atomic_bool& cancel);

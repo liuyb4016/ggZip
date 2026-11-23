@@ -7,6 +7,9 @@ add_library(ggzip_core STATIC
     src/SmartExtract.cpp
     src/PasswordStore.cpp
     src/FileAssociations.cpp
+    src/ArchivePath.cpp
+    src/FileTransaction.cpp
+    src/SourceMark.cpp
 )
 target_include_directories(ggzip_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(ggzip_core PUBLIC UNICODE _UNICODE)
@@ -20,4 +23,4 @@ elseif(MINGW)
 endif()
 
 # DPAPI（密码管理器）
-target_link_libraries(ggzip_core PRIVATE crypt32 advapi32 shell32)
+target_link_libraries(ggzip_core PRIVATE crypt32 advapi32 shell32 bcrypt)

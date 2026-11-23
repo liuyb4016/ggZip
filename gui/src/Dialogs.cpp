@@ -19,6 +19,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 #include <QStringDecoder>
+#include <QSettings>
 
 // ---------- ExtractDialog ----------
 
@@ -29,6 +30,8 @@ ExtractDialog::ExtractDialog(const QString& archivePath, bool smartDefault,
     setMinimumWidth(460);
 
     dirEdit_ = new QLineEdit(QFileInfo(archivePath).absolutePath());
+    const QString savedOutput = QSettings().value("paths/output").toString();
+    if (!savedOutput.isEmpty()) dirEdit_->setText(savedOutput);
     pwEdit_ = new QLineEdit;
     pwEdit_->setEchoMode(QLineEdit::Password);
     pwEdit_->setPlaceholderText("加密包才需要，留空表示无密码");
@@ -85,6 +88,8 @@ ExtractDialog::ExtractDialog(const QString& archivePath, bool smartDefault,
 QString ExtractDialog::targetDir() const { return dirEdit_->text().trimmed(); }
 QString ExtractDialog::password() const { return pwEdit_->text(); }
 bool ExtractDialog::smart() const { return smartCheck_->isChecked(); }
+void ExtractDialog::setPassword(const QString& password) { pwEdit_->setText(password); }
+void ExtractDialog::setSelectedOnly() { smartCheck_->setChecked(false); smartCheck_->setEnabled(false); }
 
 // ---------- PasswordManagerDialog ----------
 
@@ -257,7 +262,8 @@ CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {
     connect(outBrowse, &QPushButton::clicked, this, [this] {
         QString p = QFileDialog::getSaveFileName(this, "选择压缩包保存位置",
                                                  outEdit_->text(),
-                                                 QString::fromWCharArray(kSaveFilter));
+                                                 QString::fromWCharArray(kSaveFilter), nullptr,
+                                                 QFileDialog::DontConfirmOverwrite);
         if (!p.isEmpty()) outEdit_->setText(p);
     });
     auto* outRow = new QHBoxLayout;
@@ -286,8 +292,8 @@ CreateArchiveDialog::CreateArchiveDialog(QWidget* parent) : QDialog(parent) {
     }
 
     levelSpin_ = new QSpinBox;
-    levelSpin_->setRange(1, 9);
-    levelSpin_->setValue(5);
+    levelSpin_->setRange(0, 9);
+    levelSpin_->setValue(QSettings().value("create/level", 5).toInt());
     levelSpin_->setToolTip("1=最快 9=最小");
 
     volCombo_ = new QComboBox;

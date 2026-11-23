@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <cstdio>
 #include <exception>
+#include <QTimer>
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -38,8 +39,12 @@ int main(int argc, char* argv[]) {
     }
 
     MainWindow w;
-    w.resize(920, 620);
     w.show();
+    if (arguments.contains("--shell-action")) {
+        const auto actions = arguments.mid(arguments.indexOf("--shell-action") + 1);
+        QTimer::singleShot(0, &w, [&w, actions] { w.runShellAction(actions); });
+        return app.exec();
+    }
 
     // 支持命令行直接打开压缩包
     for (const QString& path : arguments.mid(1)) {

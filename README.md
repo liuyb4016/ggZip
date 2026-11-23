@@ -6,6 +6,14 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
 
 ### 下一版本 v0.4.0 —— 文件关联 / 安装包 / 完整发布（尚未发布）
 
+- **事务与冲突保护（本地开发中）**：GUI 逐项询问覆盖、跳过或重命名，可应用于本次同类冲突；
+  CLI 默认拒绝冲突，使用 `--on-conflict error|overwrite|skip|rename` 明确选择。
+  创建及分卷先写同卷独立暂存目录，成功后替换整组；提交失败回滚，无法恢复时保留备份并报告目录。
+  常规解压先验证安全成员并暂存，按大小/CRC 核验后发布；失败或取消只保留可验证的完整新文件，
+  不覆盖既存文件，也不发布缺少可靠校验和的中断结果
+- **预览与来源保护（本地开发中）**：非文本/图片的系统打开必须确认；保留压缩包的 MOTW 区域标记。
+  预览默认限制 200 MiB、6400 万像素、30 秒；图片在受 Job Object 内存/时间限制的辅助进程解码。
+  设置可明确提高预览上限；完整解压进行空间预检和实际输出监控，拒绝既存重解析点与文件/目录冲突
 - **文件关联**：GUI「设置-文件关联」可注册/移除「打开方式」候选，并打开 Windows 默认应用设置；
   仅写入当前用户注册表，不覆盖现有扩展名默认值或 Windows `UserChoice`。
   用户自行选为默认后，双击压缩包会打开 GUI，并显示 ggZip 图标
@@ -18,8 +26,26 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
   7-Zip 引擎及 SFX 模块、第三方许可与对应 7-Zip 源码一起打包；无需首次运行联网下载
 - **内置引擎验证**：清除 `GGZIP_7Z`、限制 `PATH` 仅包含 Windows 系统目录，
   验证实际选用包内引擎，并测试中文路径、ZIP/加密 7z/SFX 回读和分卷解压
+- **安全预览**：每个窗口/每次预览使用独立临时目录；只从引擎读取选中条目的字节流，
+  不按包内路径直接落盘。拒绝越界、绝对路径、ADS、设备名、符号/硬链接或重解析点及重复条目，
+  提取失败或取消不会显示旧缓存；只删除本实例记录的文件及空目录，不递归清理共享缓存
+- **预览安全回归**：新增 72 项路径/流式提取检查和 26 项会话/文件所有权检查，
+  覆盖中文、参数边界、密码、损坏包、伪造元信息、符号/硬链接、NTFS 目录连接及跨实例清理
 - **发布流程**：GUI CI、nightly 和正式版本复用同一构建/测试/打包流程，
   产出 ZIP、安装器和 SHA256 校验和；正式发布标签必须与 `VERSION` 一致
+
+### v0.5 日常体验功能（本地开发中，未创建版本）
+
+- **选中解压**：多选文件/目录递归解压，保留包内目录结构，复用整体解压的冲突与取消保护
+- **完整性测试**：后台测试、取消与密码重试；不修改原压缩包
+- **搜索与设置**：当前目录过滤/全包名称搜索；补充隐式目录导航；最近打开历史、输出目录、
+  压缩级别及窗口布局保存，历史可清除，密码不写入通用设置
+- **加密浏览与后台预览**：加密头部列表、加密条目预览和测试使用当前压缩包会话密码；
+  错误密码可重试，切换压缩包清除会话；只有明确选择时才保存到 DPAPI 密码库
+- **图片分发回归**：PNG/JPEG/GIF/BMP/WebP/ICO 实际编码/解码检查；
+  CI 安装匹配的 Qt Image Formats 开发模块，最终分发包包含 WebP 插件，用户无需另装组件
+
+这些开发功能尚未正式发布，远端 CI 与 Windows 10/11 完整桌面验收结果仍需另行验证。
 
 ### v0.2.0 —— Qt GUI 压缩包浏览器（M1）
 
@@ -44,7 +70,8 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
 ### v0.2.1 —— 浏览器增强
 
 - **目录导航**：双击目录进入；"上级"按钮 / Alt+Up 返回；导航栏显示当前路径
-- **图片不解压预览**：双击图片条目（png/jpg/jpeg/gif/bmp/webp/ico）提取到临时目录弹窗预览；其他文件双击用系统默认程序打开（临时目录退出时统一清理）
+- **图片预览**：双击图片条目（png/jpg/jpeg/gif/bmp/webp/ico）安全提取到临时目录后后台解码；
+  其他文件经风险确认后用系统默认程序打开（临时文件退出时按所有权清理）
 - **列排序**：点击表头按名称/大小/压缩后/类型升降序（目录始终排前）
 - **选中统计**：状态栏实时显示已选条目数与合计大小
 
@@ -101,7 +128,9 @@ cmake --build build-shell --config Release
 regsvr32 build-shell\Release\ggzip_shell.dll   &:: 注销加 /u
 ```
 
-菜单项：智能解压 / 解压到当前文件夹 / 解压到同名文件夹（选中压缩包时），添加到 `<名>.7z` / `.zip`（选中文件或文件夹空白处时）。执行时启动 `ggz.exe`（定位顺序：环境变量 `GGZIP_GGZ` → 注册表 `HKCU\Software\ggZip\GgzPath` → DLL 同目录 → `PATH`）。
+菜单项：智能解压 / 解压到当前文件夹 / 解压到同名文件夹（选中压缩包时），添加到 `<名>.7z` / `.zip`（选中文件或文件夹空白处时）。
+默认优先启动相邻 GUI，支持交互冲突确认；显式设置 `GGZIP_GGZ` 时使用 CLI。
+CLI 定位顺序：环境变量 `GGZIP_GGZ` → 注册表 `HKCU\Software\ggZip\GgzPath` → DLL 同目录 → `PATH`。
 
 自动化测试（不经 Explorer，27 项检查；干跑验证命令行，`--e2e` 走真实 ggz 全链路）：
 
@@ -121,7 +150,8 @@ $env:GGZIP_7Z = Join-Path $engine.Directory '7z.exe'
 ctest --test-dir build --output-on-failure
 ```
 
-支持 CTest（包含核心冒烟测试和文件关联隔离测试）：
+支持 CTest（核心冒烟、文件关联隔离、预览路径/流式安全、事务保护与进程资源限制测试；
+启用 GUI 构建时还包含 Qt 预览会话、模型/搜索、图片解码及后台取消回归）：
 
 ```bat
 ctest --test-dir build --output-on-failure
@@ -130,7 +160,7 @@ ctest --test-dir build-msvc -C Release --output-on-failure
 
 ### 构建完整便携包与安装包
 
-需要 Windows x64、MSVC、CMake/CTest、Qt 6.9.3 MSVC x64、PowerShell 7、
+需要 Windows x64、MSVC、CMake/CTest、Qt 6.9.3 MSVC x64（含 Qt Image Formats 开发模块）、PowerShell 7、
 Inno Setup ≥ 6.3。CMake/CTest 需在 `PATH` 中。
 打包脚本自动获取并缓存 SHA256 固定的官方 7-Zip 引擎、SFX 模块与对应源码，
 不执行 7-Zip 安装程序；同时获取匹配 Qt 版本的 LGPL/GPL 许可文本。
@@ -170,7 +200,9 @@ Shell 宿主测试会注册/注销经典右键菜单，只应在无现有 ggZip 
 
 ```bat
 ggz list archive.zip
+ggz list secret.7z -p MyPassword
 ggz extract archive.7z -o D:\out
+ggz extract archive.7z -o D:\out --on-conflict rename
 ggz smart-extract tool.tar.gz -o D:\tools
 ggz create backup.7z D:\docs --level 7 --threads 8
 ggz create secret.zip D:\docs -p MyPassword
@@ -181,6 +213,11 @@ ggz pass add backup.7z -p MyPassword
 ggz pass remove backup.7z
 ggz where
 ```
+
+CLI 冲突默认退出码 4；取消退出码 3；部分操作失败退出码 1，报告已保留的完整文件数量。
+创建取消保留原包。中断解压不能保证恢复每个条目：只有大小和 CRC 都可靠的完整新文件才保留。
+整包暂存会额外占用压缩包快照及解码空间，不使用逐条重新解码固实包的方法。
+当前事务快照支持 `.001/.002…` 分卷；其他 RAR/ZIP 分卷命名还需兼容回归。
 
 ## 架构
 
@@ -197,12 +234,16 @@ shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt/core）：�
 
 ## 路线图
 
+详细开发清单、优先级、验收标准与版本建议见 [ROADMAP.md](ROADMAP.md)。
+
 - [x] M0/v0.1 —— 核心引擎 + CLI + 智能解压 + 冒烟测试
 - [x] M1/v0.2 —— Qt GUI：压缩包浏览器（列表/解压/压缩/智能解压/进度取消）
 - [x] M2 —— Windows 经典右键菜单 Shell 扩展、E2E 测试、文件关联与图标
 - [x] M3/v0.3 —— 密码管理器（DPAPI）、分卷压缩、SFX 自解压、文本/图片不解压预览
 - [x] M4-A —— 安装包（Inno Setup）、完整便携包、nightly/正式版本发布流程
 - [ ] M4-B —— Win11 新式右键菜单（IExplorerCommand）、多语言
+- [ ] M5 —— 安全与可靠性收尾、选中解压、GUI 完整性测试、加密浏览与后台预览
+- [ ] M6 —— 批量任务、压缩包编辑、版本检查与维护
 
 ## 许可
 

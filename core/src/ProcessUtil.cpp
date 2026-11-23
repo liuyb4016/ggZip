@@ -12,10 +12,17 @@ std::wstring quoteArg(const std::wstring& a) {
     std::wstring s;
     s.reserve(a.size() + 2);
     s += L'"';
+    std::size_t backslashes = 0;
     for (wchar_t c : a) {
-        if (c == L'"') s += L"\\\"";
-        else s += c;
+        if (c == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        s.append(c == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
+        backslashes = 0;
+        s += c;
     }
+    s.append(backslashes * 2, L'\\');
     s += L'"';
     return s;
 }
@@ -57,7 +64,7 @@ void readAll(HANDLE file, const std::function<bool(std::string_view)>& sink) {
 
 RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
               const std::function<bool(std::string_view chunk)>& onStdout,
-              const std::atomic_bool& cancel) {
+              const std::atomic_bool& cancel, const RunOptions& options) {
     std::wstring cmdline = quoteArg(exe);
     for (const auto& a : args) {
         cmdline += L' ';
@@ -68,34 +75,82 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
     Pipe err = makePipe();
 
     SECURITY_ATTRIBUTES sa{ sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
-    HANDLE stdinNul = CreateFileW(L"NUL", GENERIC_READ,
-                                  FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                  &sa, OPEN_EXISTING, 0, nullptr);
-
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
+    const std::wstring input = options.inputFile.empty() ? L"NUL" : options.inputFile;
+    HANDLE stdinNul = CreateFileW(input.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                  &sa, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (stdinNul == INVALID_HANDLE_VALUE) {
+        closeHandleSafe(out.read); closeHandleSafe(out.write);
+        closeHandleSafe(err.read); closeHandleSafe(err.write);
+        throw ArchiveError("无法创建只读输入句柄");
+    }
+    if (!options.inputFile.empty()) {
+        BY_HANDLE_FILE_INFORMATION information{};
+        if (!GetFileInformationByHandle(stdinNul, &information) ||
+            (information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+            CloseHandle(stdinNul);
+            closeHandleSafe(out.read); closeHandleSafe(out.write);
+            closeHandleSafe(err.read); closeHandleSafe(err.write);
+            throw ArchiveError("辅助进程输入必须为普通文件");
+        }
+    }
+    STARTUPINFOEXW startup{};
+    auto& si = startup.StartupInfo;
+    si.cb = sizeof(startup);
     si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput  = stdinNul ? stdinNul : GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdInput = stdinNul;
     si.hStdOutput = out.write;
     si.hStdError  = err.write;
+    SIZE_T attributeBytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+    std::vector<unsigned char> attributeBuffer(attributeBytes);
+    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeBuffer.data());
+    HANDLE inherited[] = {stdinNul, out.write, err.write};
+    const bool attributesInitialized = InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeBytes);
+    const bool attributesReady = attributesInitialized &&
+        UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                  inherited, sizeof(inherited), nullptr, nullptr);
+    if (!attributesReady) {
+        if (attributesInitialized) DeleteProcThreadAttributeList(startup.lpAttributeList);
+        CloseHandle(stdinNul);
+        closeHandleSafe(out.read); closeHandleSafe(out.write);
+        closeHandleSafe(err.read); closeHandleSafe(err.write);
+        throw ArchiveError("无法设置辅助进程句柄隔离");
+    }
 
     std::vector<wchar_t> cmdbuf(cmdline.begin(), cmdline.end());
     cmdbuf.push_back(L'\0');
 
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(nullptr, cmdbuf.data(), nullptr, nullptr, TRUE,
-                             CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (options.memoryLimit) {
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        limits.ProcessMemoryLimit = static_cast<SIZE_T>(options.memoryLimit);
+    }
+    const BOOL configured = job && SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+    BOOL ok = configured && CreateProcessW(nullptr, cmdbuf.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &si, &pi);
     DWORD createError = GetLastError();
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
     if (stdinNul) CloseHandle(stdinNul);
     // 父进程必须关闭自己的写端，否则子进程退出后读端收不到 EOF
     closeHandleSafe(out.write);
     closeHandleSafe(err.write);
     if (!ok) {
+        closeHandleSafe(job);
         closeHandleSafe(out.read);
         closeHandleSafe(err.read);
         throw ArchiveError("无法启动进程: " + utf8(exe) + " (Win32 错误码 " +
                     std::to_string(createError) + ")");
     }
+    if (!AssignProcessToJobObject(job, pi.hProcess)) {
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        closeHandleSafe(out.read); closeHandleSafe(err.read); closeHandleSafe(job);
+        throw ArchiveError("无法隔离辅助进程");
+    }
+    ResumeThread(pi.hThread);
 
     std::string errAcc;
     std::atomic_bool stopRequested{ false };
@@ -120,20 +175,31 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
                      std::function<bool(std::string_view)>(sinkWrap));
     std::thread tErr(readAll, err.read,
                      std::function<bool(std::string_view)>(
-                         [&](std::string_view c) { errAcc.append(c); return true; }));
+                         [&](std::string_view c) {
+                             errAcc.append(c);
+                             if (errAcc.size() > 8192) errAcc.erase(0, errAcc.size() - 8192);
+                             return true;
+                         }));
 
-    // 等待子进程退出或取消（每 50ms 轮询一次取消标记）
+    bool timedOut = false;
+    std::exception_ptr monitorError;
     for (;;) {
         DWORD w = WaitForSingleObject(pi.hProcess, 50);
         if (w == WAIT_OBJECT_0) break;
-        if (cancel.load(std::memory_order_relaxed) ||
+        try {
+            if (w == WAIT_FAILED) throw ArchiveError("等待辅助进程失败");
+            if (options.monitor) options.monitor();
+        } catch (...) { monitorError = std::current_exception(); }
+        timedOut = options.deadlineTick && GetTickCount64() >= options.deadlineTick;
+        if (timedOut || monitorError || cancel.load(std::memory_order_relaxed) ||
             stopRequested.load(std::memory_order_relaxed)) {
-            TerminateProcess(pi.hProcess, (UINT)-1);
+            TerminateJobObject(job, static_cast<UINT>(-1));
             WaitForSingleObject(pi.hProcess, INFINITE);
             break;
         }
     }
 
+    closeHandleSafe(job);
     tOut.join();
     tErr.join();
 
@@ -141,8 +207,11 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
     GetExitCodeProcess(pi.hProcess, &code);
     closeHandleSafe(pi.hThread);
     closeHandleSafe(pi.hProcess);
+    closeHandleSafe(job);
 
     if (pending) std::rethrow_exception(pending);
+    if (monitorError) std::rethrow_exception(monitorError);
+    if (timedOut) throw ArchiveError("操作超时，辅助进程已停止");
 
     RunResult r;
     bool cancelled = cancel.load() || stopRequested.load();

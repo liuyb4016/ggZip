@@ -25,6 +25,8 @@ public:
     QString targetDir() const;
     QString password() const;
     bool smart() const;
+    void setPassword(const QString& password);
+    void setSelectedOnly();
 
 private:
     QLineEdit* dirEdit_;

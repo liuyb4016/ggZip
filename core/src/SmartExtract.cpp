@@ -36,13 +36,13 @@ SmartDecision smartPlan(const std::vector<Entry>& entries) {
     return d;
 }
 
-std::wstring extractSmart(const IEngine& engine, const std::wstring& archive,
+OperationSummary extractSmart(const IEngine& engine, const std::wstring& archive,
                           const std::wstring& outDir, bool smart,
                           const ExtractOptions& opt, const ProgressFn& onProgress,
                           const std::atomic_bool& cancel) {
     std::wstring target = outDir;
     if (smart) {
-        auto entries = engine.list(archive);
+        auto entries = engine.list(archive, {opt.password, true, &cancel, opt.deadlineTick});
         auto d = smartPlan(entries);
         if (d.intoSubfolder) {
             // 以压缩包名（去掉全部扩展名）作为子文件夹名
@@ -56,31 +56,7 @@ std::wstring extractSmart(const IEngine& engine, const std::wstring& archive,
             target = outDir + L"\\" + dedupeFolderName(outDir, name);
         }
     }
-    std::error_code ec;
-    fs::create_directories(fs::path(target), ec);
-
-    engine.extract(archive, target, {}, opt, onProgress, cancel);
-    if (cancel.load()) return target;
-
-    // tar.* 两层格式：7z 一次只解一层，若解出的只有单个 .tar，再解一层
-    if (isTarWrappedExt(archive)) {
-        size_t count = 0;
-        fs::path only;
-        for (const auto& de : fs::directory_iterator(fs::path(target), ec)) {
-            ++count;
-            if (count == 1) only = de.path();
-        }
-        if (count == 1) {
-            std::wstring ext = only.extension().wstring();
-            std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](wchar_t c) { return (wchar_t)std::towlower(c); });
-            if (ext == L".tar") {
-                engine.extract(only.wstring(), target, {}, opt, onProgress, cancel);
-                if (!cancel.load()) fs::remove(only, ec);
-            }
-        }
-    }
-    return target;
+    return engine.extract(archive, target, {}, opt, onProgress, cancel);
 }
 
 std::wstring dedupeFolderName(const std::wstring& parentDir,

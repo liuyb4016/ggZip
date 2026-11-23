@@ -27,10 +27,12 @@ public:
     void setPrefix(const QString& prefix);
     QString prefix() const { return prefix_; }
     QString displayPath() const;  // 面包屑显示文本
+    void setSearch(const QString& query, bool wholeArchive);
+    bool hasEncryptedEntries() const;
 
     // 当前可见行对应的条目；越界返回 nullptr
     const ggzip::Entry* entryAt(int row) const;
-    int allCount() const { return (int)all_.size(); }  // 全部条目数（含未进入的目录）
+    int allCount() const { return memberCount_; }
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -48,4 +50,7 @@ private:
     QString prefix_;                 // 当前目录前缀（'' = 根；以 '/' 结尾）
     int sortColumn_ = -1;            // -1 = 默认排序（目录在前，按路径）
     Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
+    QString search_;
+    bool wholeArchive_ = false;
+    int memberCount_ = 0;
 };

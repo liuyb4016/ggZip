@@ -1,6 +1,7 @@
 // ggz —— ggZip 命令行工具 (v0.1)
 #include <windows.h>
 #include "ggzip/ArchiveError.h"
+#include "ggzip/OperationError.h"
 #include "ggzip/EngineFactory.h"
 #include "ggzip/Format.h"
 #include "ggzip/IEngine.h"
@@ -66,7 +67,7 @@ const char* kUsage =
     "ggz —— ggZip 命令行工具\n"
     "\n"
     "用法:\n"
-    "  ggz list <压缩包>                                  列出内容\n"
+    "  ggz list <压缩包> [-p 密码]                        列出内容\n"
     "  ggz extract <压缩包> [-o 目录] [-p 密码]            解压\n"
     "  ggz smart-extract <压缩包> [-o 目录] [-p 密码]      智能解压\n"
     "  ggz create <压缩包> <输入...> [-p 密码] [--level N] [--threads N]\n"
@@ -80,6 +81,7 @@ const char* kUsage =
     "  ggz smart-extract tool.tar.gz -o D:\\tools\n"
     "\n"
     "说明: 压缩引擎为 7z.exe（自动定位：环境变量 GGZIP_7Z -> 程序同目录 -> PATH -> Program Files）。\n"
+    "冲突策略: --on-conflict error|overwrite|skip|rename（默认 error，绝不隐式覆盖）。\n"
     "创建支持: 7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz；\n"
     "解压支持 7z 引擎的全部 40+ 格式（zip/7z/rar/iso/cab/wim/msi 等）。\n";
 
@@ -92,6 +94,7 @@ struct Args {
     int level = 5;
     int threads = 0;
     bool smart = false;
+    ggzip::ConflictPolicy conflict = ggzip::ConflictPolicy::Reject;
 };
 
 bool parseArgs(int argc, wchar_t** argv, std::wstring& cmd, Args& a) {
@@ -103,6 +106,14 @@ bool parseArgs(int argc, wchar_t** argv, std::wstring& cmd, Args& a) {
     for (int i = 2; i < argc; ++i) {
         std::wstring s = argv[i];
         if (s == L"--smart") { a.smart = true; }
+        else if (s == L"--on-conflict" && i + 1 < argc) {
+            const std::wstring value = argv[++i];
+            if (value == L"error") a.conflict = ggzip::ConflictPolicy::Reject;
+            else if (value == L"overwrite") a.conflict = ggzip::ConflictPolicy::Overwrite;
+            else if (value == L"skip") a.conflict = ggzip::ConflictPolicy::Skip;
+            else if (value == L"rename") a.conflict = ggzip::ConflictPolicy::Rename;
+            else throw ggzip::ConflictError("无效的覆盖策略");
+        }
         else if (s == L"--volume" && i + 1 < argc) { a.volumeSize = argv[++i]; }
         else if (s == L"--level" && i + 1 < argc) { a.level = _wtoi(argv[++i]); }
         else if (s == L"--threads" && i + 1 < argc) { a.threads = _wtoi(argv[++i]); }
@@ -122,7 +133,7 @@ bool parseArgs(int argc, wchar_t** argv, std::wstring& cmd, Args& a) {
 
 int cmdList(ggzip::IEngine& e, const Args& a) {
     std::vector<ggzip::Entry> entries;
-    auto info = e.inspect(a.archive, &entries);
+    auto info = e.inspect(a.archive, &entries, {a.password, true});
     outln("压缩包: " + ggzip::utf8(a.archive));
     outln(std::string("格式:   ") + (info.typeName.empty() ? "unknown" : info.typeName) +
           "    物理大小: " + humanSize(info.physicalSize) +
@@ -141,12 +152,14 @@ int cmdExtract(ggzip::IEngine& e, const Args& a) {
     fs::path target = a.outDir.empty() ? fs::current_path() : fs::path(a.outDir);
     ggzip::ExtractOptions opt;
     opt.password = a.password;
+    opt.conflict = a.conflict;
 
-    auto realOut = ggzip::extractSmart(e, a.archive, target.wstring(), a.smart,
+    auto result = ggzip::extractSmart(e, a.archive, target.wstring(), a.smart,
                                        opt, printProgress, g_cancel);
     finishProgress();
-    if (g_cancel.load()) { errln("已取消"); return 3; }
-    outln("已解压到: " + ggzip::utf8(realOut));
+    outln("完成 " + std::to_string(result.completed) + " 项，跳过 " + std::to_string(result.skipped) +
+          " 项，输出: " + ggzip::utf8(result.destination));
+    if (result.outcome == ggzip::Outcome::Cancelled) { errln("已取消，完整新文件已保留"); return 3; }
     return 0;
 }
 
@@ -156,10 +169,11 @@ int cmdCreate(ggzip::IEngine& e, const Args& a) {
     opt.level = a.level;
     opt.threads = a.threads;
     opt.volumeSize = a.volumeSize;
-    e.create(a.archive, a.inputs, opt, printProgress, g_cancel);
+    opt.conflict = a.conflict;
+    const auto result = e.create(a.archive, a.inputs, opt, printProgress, g_cancel);
     finishProgress();
-    if (g_cancel.load()) { errln("已取消"); return 3; }
-    outln("已创建: " + ggzip::utf8(a.archive));
+    if (result.outcome == ggzip::Outcome::Cancelled) { errln("已取消，原压缩包未改变"); return 3; }
+    outln(result.skipped ? "已跳过现有压缩包" : "已创建: " + ggzip::utf8(result.destination));
     return 0;
 }
 
@@ -254,12 +268,23 @@ int wmain(int argc, wchar_t** argv) {
         }
         outln(kUsage);
         return 1;
+    } catch (const ggzip::ConflictError& error) {
+        finishProgress();
+        errln(error.what());
+        return 4;
+    } catch (const ggzip::OperationError& error) {
+        finishProgress();
+        errln(error.what());
+        errln("已保留完整文件: " + std::to_string(error.summary.completed));
+        return 1;
     } catch (const ggzip::ArchiveError& e) {
         finishProgress();
+        if (g_cancel.load()) { errln("已取消"); return 3; }
         errln(std::string("错误: ") + e.what());
         return 2;
     } catch (const std::exception& e) {
         finishProgress();
+        if (g_cancel.load()) { errln("已取消"); return 3; }
         errln(std::string("错误: ") + e.what());
         return 2;
     }
