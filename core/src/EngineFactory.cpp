@@ -31,8 +31,8 @@ std::optional<std::wstring> locateSevenZip() {
     if (GetModuleFileNameW(nullptr, mod, MAX_PATH)) {
         std::wstring dir = dirOf(mod);
         if (!dir.empty()) {
-            candidates.push_back(dir + L"\\7z.exe");
             candidates.push_back(dir + L"\\7z\\7z.exe");
+            candidates.push_back(dir + L"\\7z.exe");
             candidates.push_back(dir + L"\\7za.exe");
             candidates.push_back(dir + L"\\7z\\7za.exe");
         }

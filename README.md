@@ -4,6 +4,23 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
 
 ## 已实现
 
+### 下一版本 v0.4.0 —— 文件关联 / 安装包 / 完整发布（尚未发布）
+
+- **文件关联**：GUI「设置-文件关联」可注册/移除「打开方式」候选，并打开 Windows 默认应用设置；
+  仅写入当前用户注册表，不覆盖现有扩展名默认值或 Windows `UserChoice`。
+  用户自行选为默认后，双击压缩包会打开 GUI，并显示 ggZip 图标
+- **安全清理**：卸载只删除本执行文件路径拥有的关联；其他安装副本、其他程序关联及密码库不受影响；
+  新增 27 项注册表隔离测试，覆盖中文路径、带空格路径、重复注册、跨副本清理与默认应用保护
+- **安装包**：Inno Setup，支持 Windows 10 1809+ / Windows 11 x64，当前用户安装，无需管理员；
+  可选桌面快捷方式、文件关联和经典右键菜单；
+  内置 7-Zip 26.06 引擎，支持同目录升级和卸载清理，不需要用户另装 7-Zip
+- **完整便携包**：GUI、CLI、Shell DLL、Qt 插件、x64 Visual C++ 运行库、
+  7-Zip 引擎及 SFX 模块、第三方许可与对应 7-Zip 源码一起打包；无需首次运行联网下载
+- **内置引擎验证**：清除 `GGZIP_7Z`、限制 `PATH` 仅包含 Windows 系统目录，
+  验证实际选用包内引擎，并测试中文路径、ZIP/加密 7z/SFX 回读和分卷解压
+- **发布流程**：GUI CI、nightly 和正式版本复用同一构建/测试/打包流程，
+  产出 ZIP、安装器和 SHA256 校验和；正式发布标签必须与 `VERSION` 一致
+
 ### v0.2.0 —— Qt GUI 压缩包浏览器（M1）
 
 - **主窗口**：菜单/工具栏/拖拽打开压缩包；条目表格（名称/大小/压缩后/类型，目录排前）；UTF-8 中文路径与文件名正常显示
@@ -19,7 +36,8 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
   GUI 「设置-密码管理器」增删管理，解压/创建对话框提供「从密码库」下拉一键填充
 - **分卷压缩**：创建对话框选择分卷大小（10m/50m/100m/500m/1g，可自定义），7z 分卷 `.001/.002...`；
   解压/列表/测试直接给基础名（`a.7z`）即可——引擎自动解析首卷
-- **SFX 自解压包**：保存为 `.exe`（7z `-sfx`）；需要完整版 7-Zip（含 SFX 模块），便携 7za 不支持
+- **SFX 自解压包**：保存为 `.exe`（7z `-sfx`）；分发包已包含完整引擎和 SFX 模块，
+  无需额外安装；若自行换用便携 7za，则不支持 SFX
 - **文本预览**：双击 txt/md/log/代码等文本条目弹窗预览（等宽字体、前 100KB 截断提示），
   BOM/UTF-8/GBK 自动识别
 
@@ -32,7 +50,8 @@ Windows 平台压缩软件，目标对标 [Bandizip](https://en.bandisoft.com/ba
 
 ### v0.1.0 —— 核心引擎 + CLI
 
-- **引擎**：基于 7z.exe 子进程。自动定位顺序：环境变量 `GGZIP_7Z` → 程序同目录（便携分发）→ `PATH` → `C:\Program Files\7-Zip`
+- **引擎**：基于内置 `7z.exe` 子进程，无需另外安装 7-Zip。
+  定位顺序：显式环境变量 `GGZIP_7Z` → 程序旁的 `7z\7z.exe` → 同目录旧版引擎 → `PATH` → 标准安装位置
 - **创建**：7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz（tar.* 自动两段式打包）
 - **加密**：7z 密码加密（AES-256 + 头部加密 `-mhe`）、zip 密码加密
 - **解压/列表**：7z 引擎支持的 40+ 格式（zip、7z、rar、tar、gz、iso、cab、wim、msi 等）
@@ -74,7 +93,9 @@ cmake -S shell -B build-shell -A x64
 cmake --build build-shell --config Release
 ```
 
-产物 `build-shell\Release\ggzip_shell.dll`（MSVC，不依赖 Qt/core）。注册到当前用户（无需管理员；Win11 需在右键「显示更多选项」中可见）：
+产物 `build-shell\Release\ggzip_shell.dll`（MSVC，静态链接 C++ 运行库，不依赖 Qt/core）。
+因此 Explorer 加载扩展不依赖系统另行安装 Visual C++ 运行库。
+注册到当前用户（无需管理员；Win11 需在右键「显示更多选项」中可见）：
 
 ```bat
 regsvr32 build-shell\Release\ggzip_shell.dll   &:: 注销加 /u
@@ -86,18 +107,64 @@ regsvr32 build-shell\Release\ggzip_shell.dll   &:: 注销加 /u
 
 ```bat
 build-shell\Release\shell_host_test.exe build-shell\Release\ggzip_shell.dll
-set GGZIP_7Z=E:\work\ggZip\tools\7zip\7za.exe
-build-shell\Release\shell_host_test.exe build-shell\Release\ggzip_shell.dll build\ggz.exe --e2e
+set GGZIP_7Z=%CD%\tools\7zip\26.06\engine\7z.exe
+build-shell\Release\shell_host_test.exe build-shell\Release\ggzip_shell.dll build\cli\ggz.exe --e2e
 ```
 
 ## 运行测试
 
-本机需有 7-Zip（或便携 7za.exe）：
+对于源码的独立 CMake 构建，先准备固定版本引擎，无需安装系统 7-Zip：
+
+```powershell
+$engine = .\packaging\prepare-engine.ps1
+$env:GGZIP_7Z = Join-Path $engine.Directory '7z.exe'
+ctest --test-dir build --output-on-failure
+```
+
+支持 CTest（包含核心冒烟测试和文件关联隔离测试）：
 
 ```bat
-set GGZIP_7Z=C:\Program Files\7-Zip\7z.exe
-build\ggzip_smoke.exe
+ctest --test-dir build --output-on-failure
+ctest --test-dir build-msvc -C Release --output-on-failure
 ```
+
+### 构建完整便携包与安装包
+
+需要 Windows x64、MSVC、CMake/CTest、Qt 6.9.3 MSVC x64、PowerShell 7、
+Inno Setup ≥ 6.3。CMake/CTest 需在 `PATH` 中。
+打包脚本自动获取并缓存 SHA256 固定的官方 7-Zip 引擎、SFX 模块与对应源码，
+不执行 7-Zip 安装程序；同时获取匹配 Qt 版本的 LGPL/GPL 许可文本。
+
+```powershell
+.\packaging\build.ps1 -QtDir 'C:\Qt\6.9.3\msvc2022_64' `
+    -IsccPath 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+```
+
+默认输出到 `out/packages/`：
+
+- `ggZip-v0.4.0-win64.zip`：解压后直接运行 `ggzip_gui.exe`
+- `ggZip-v0.4.0-win64-setup.exe`：当前用户安装器
+- `ggZip-v0.4.0-win64-SHA256SUMS.txt`：便携包及安装器校验和
+
+脚本不会覆盖已有分发目录或安装器；重跑时指定新的 `-OutputDir` 或 `-PackageName`。
+使用 `-SkipBuild` 可复用已构建的 Release 产物，但仍会执行 CTest 和分发自检。
+默认自动定位 MSVC x64 可再分发 DLL；也可用 `-RuntimeDir` 指定目录。
+安装器保留 `%APPDATA%\ggZip` 下的密码数据，且不会自行改变默认应用。
+7-Zip 仅作为内部组件放到 `{app}\7z`，不会额外安装其文件管理器、右键菜单或卸载程序；
+不会修改系统原有 7-Zip。便携包也已自带引擎，用户无需另外安装或配置。
+引擎版本、下载地址和逐文件校验和统一记录在 `packaging/7zip.json`；
+升级引擎需同步更新官方二进制、对应源码和许可文件的校验信息。
+
+GUI CI 上传完整分发产物。Nightly 保持每日北京时间 05:00、有新提交才发布的行为，
+现在也包含 GUI 和安装器。正式发布由与 `VERSION` 相同的 `v<版本号>` 标签触发。
+CI 使用 SHA256 固定的 `Tools.InnoSetup` 6.7.3 NuGet 工具包，并验证编译器签名；
+它仅用于构建，不随 ggZip 分发。
+
+Shell 宿主测试会注册/注销经典右键菜单，只应在无现有 ggZip Shell 注册的测试环境运行；
+打包脚本需显式传入 `-RunShellTests` 才会执行。安装、升级、卸载集成测试由
+`packaging/test-installer.ps1` 在一次性 GitHub Actions runner 上执行，
+不在本机自动安装 ggZip 或修改本机默认应用。安装及升级后，CI 还会在清除引擎环境变量、
+不使用系统 7-Zip 的条件下执行完整内置引擎回归。
 
 ## CLI 用法
 
@@ -132,13 +199,18 @@ shell/  Windows 右键菜单 COM 扩展（独立 DLL，不依赖 Qt/core）：�
 
 - [x] M0/v0.1 —— 核心引擎 + CLI + 智能解压 + 冒烟测试
 - [x] M1/v0.2 —— Qt GUI：压缩包浏览器（列表/解压/压缩/智能解压/进度取消）
-- [ ] M2/v0.3 —— Windows 右键菜单 Shell 扩展（经典菜单已完成并带 E2E 测试；文件关联图标待做）
+- [x] M2 —— Windows 经典右键菜单 Shell 扩展、E2E 测试、文件关联与图标
 - [x] M3/v0.3 —— 密码管理器（DPAPI）、分卷压缩、SFX 自解压、文本/图片不解压预览
-- [ ] M4 —— Win11 新式右键菜单（IExplorerCommand）、安装包（Inno Setup）、多语言
+- [x] M4-A —— 安装包（Inno Setup）、完整便携包、nightly/正式版本发布流程
+- [ ] M4-B —— Win11 新式右键菜单（IExplorerCommand）、多语言
 
 ## 许可
 
 本项目代码以 MIT 许可发布（见 LICENSE）。
 
-运行时依赖 [7-Zip](https://www.7-zip.org)（`7z.exe`，LGPL + unRAR 限制）作为外部引擎，
-本仓库不分发其二进制；使用 ggZip 时请自行安装 7-Zip 或从官方渠道获取。
+安装包及便携包随附 [7-Zip](https://www.7-zip.org) 26.06 的官方未修改引擎及 SFX 模块，
+用户无需自行安装。7-Zip 组件保留 GNU LGPL 2.1-or-later、BSD 通知及 unRAR 限制，
+不改用 ggZip 的 MIT 许可。包内 `licenses/7zip/` 包含原始通知与许可全文，
+`sources/7zip/7z2606-src.7z` 包含完整对应源码。
+详细说明见 `packaging/THIRD_PARTY_NOTICES.md`；引擎二进制及源码由打包脚本获取，
+不作为 Git 仓库内的手工维护二进制提交。

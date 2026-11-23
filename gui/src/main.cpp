@@ -1,26 +1,48 @@
 // ggZip GUI 入口
 #include "MainWindow.h"
 #include "ggzip/EngineFactory.h"
+#include "ggzip/FileAssociations.h"
 #include <QApplication>
+#include <QIcon>
+#include <QMessageBox>
+#include <cstdio>
+#include <exception>
 
 int main(int argc, char* argv[]) {
-    // --selftest：验证压缩引擎可定位后退出（供 CI 使用）
-    for (int i = 1; i < argc; ++i) {
-        if (QString::fromLocal8Bit(argv[i]) == "--selftest")
-            return ggzip::createEngine()->available() ? 0 : 3;
-    }
-
     QApplication app(argc, argv);
     QApplication::setApplicationName("ggZip");
     QApplication::setOrganizationName("ggZip");
+    QApplication::setApplicationVersion(GGZIP_VERSION);
+    QApplication::setWindowIcon(QIcon(":/ggzip.ico"));
+
+    const QStringList arguments = QApplication::arguments();
+    if (arguments.contains("--selftest")) {
+        if (QApplication::windowIcon().isNull()) return 4;
+        return ggzip::createEngine()->available() ? 0 : 3;
+    }
+    const bool registerAssociations = arguments.contains("--register-associations");
+    const bool unregisterAssociations = arguments.contains("--unregister-associations");
+    if (registerAssociations || unregisterAssociations) {
+        if (registerAssociations && unregisterAssociations) return 2;
+        try {
+            const std::wstring applicationPath = QApplication::applicationFilePath().toStdWString();
+            if (registerAssociations) ggzip::registerFileAssociations(applicationPath);
+            else ggzip::unregisterFileAssociations(applicationPath);
+            return 0;
+        } catch (const std::exception& error) {
+            if (!arguments.contains("--quiet"))
+                QMessageBox::critical(nullptr, "文件关联失败", QString::fromUtf8(error.what()));
+            std::fprintf(stderr, "%s\n", error.what());
+            return 1;
+        }
+    }
 
     MainWindow w;
     w.resize(920, 620);
     w.show();
 
     // 支持命令行直接打开压缩包
-    for (int i = 1; i < argc; ++i) {
-        const QString path = QString::fromLocal8Bit(argv[i]);
+    for (const QString& path : arguments.mid(1)) {
         if (!path.isEmpty()) w.openArchive(path);
     }
     return app.exec();

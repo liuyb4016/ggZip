@@ -4,11 +4,18 @@
 #   cmake --build build-shell --config Release
 #   ctest --test-dir build-shell -C Release     （或直接运行 shell_host_test，见下）
 cmake_minimum_required(VERSION 3.20)
-project(ggZipShell LANGUAGES CXX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" GGZIP_VERSION LIMIT_COUNT 1)
+project(ggZipShell VERSION ${GGZIP_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(GGZIP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/res/ggzip.ico")
+set(GGZIP_RESOURCE_DESCRIPTION "ggZip Shell Extension")
+set(GGZIP_RESOURCE_FILENAME "ggzip_shell.dll")
+set(GGZIP_RESOURCE_TYPE "0x2L")
+configure_file(../cmake/windows.rc.in "${CMAKE_CURRENT_BINARY_DIR}/ggzip_shell.rc" @ONLY)
 
 add_library(ggzip_shell SHARED
     src/dllmain.cpp
@@ -16,13 +23,14 @@ add_library(ggzip_shell SHARED
     src/ShellMenu.cpp
     src/RegistryUtil.cpp
     src/Launcher.cpp
-    ggzip_shell.rc
+    "${CMAKE_CURRENT_BINARY_DIR}/ggzip_shell.rc"
     src/ggzip_shell.def
 )
 
 set_target_properties(ggzip_shell PROPERTIES
     OUTPUT_NAME "ggzip_shell"
     PREFIX ""
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
 )
 
 # 中文菜单文本需要 /utf-8

@@ -141,8 +141,8 @@ std::wstring SevenZipEngine::resolveFirstVolume(const std::wstring& path) const 
 
 void SevenZipEngine::ensure() const {
     if (exe_.empty())
-        throw ArchiveError("未找到 7z.exe 压缩引擎。请安装 7-Zip、设置环境变量 GGZIP_7Z，"
-                    "或将 7z.exe 放到程序同目录。");
+        throw ArchiveError("内置 7-Zip 引擎文件缺失。请重新安装或完整解压 ggZip，保留 7z 子目录。"
+                    "源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。");
 }
 
 ArchiveInfo SevenZipEngine::inspect(const std::wstring& archive,

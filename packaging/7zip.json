@@ -1,0 +1,37 @@
+{
+  "version": "26.06",
+  "extractor": {
+    "name": "7zr.exe",
+    "url": "https://github.com/ip7z/7zip/releases/download/26.06/7zr.exe",
+    "sha256": "E80DB2DAD715A6C5ADABE292D31ED54E11F4E9B99CA349827B50573B175891BC"
+  },
+  "installer": {
+    "name": "7z2606-x64.exe",
+    "url": "https://github.com/ip7z/7zip/releases/download/26.06/7z2606-x64.exe",
+    "sha256": "9B697F65ECC2D9B0152F5EE96D72DDE522A7827690349D9307935DACF40F42EC"
+  },
+  "source": {
+    "name": "7z2606-src.7z",
+    "url": "https://github.com/ip7z/7zip/releases/download/26.06/7z2606-src.7z",
+    "sha256": "E0364D39E8208557D939472C9A12D02ED1C12F45CA402E3B408BCAA63B36DD93"
+  },
+  "payload": [
+    { "name": "7z.exe", "sha256": "DC0493429FE28136FCB177A0E77C9875CBB3B0BFF5F2F8EEBA4DF302E98CEF76" },
+    { "name": "7z.dll", "sha256": "500DB9EB17F3C21B729BA41DD02ECFE1823DA05028C7E4BA129084CC74CC364E" },
+    { "name": "7z.sfx", "sha256": "73AF2700392AA92BC9342AE63844DFEED157D8D68BD356326A9BDDB5E9E312D7" },
+    { "name": "7zCon.sfx", "sha256": "0AEE2FC9478CA520068FC758D6B21854FD9993034A045364A8991E068080706C" },
+    { "name": "License.txt", "sha256": "519AC0A4BDED9C18EA02E0AFB71F663D8C47373BD9FACD3AC96A79F51D77765D" }
+  ],
+  "sourceLicenses": [
+    {
+      "path": "DOC/copying.txt",
+      "name": "GNU-LGPL-2.1.txt",
+      "sha256": "1E7E6BAE5A5BDE32F1AE5A7C37A082D1AB03CF89354F7F936AC40BE9E39A6531"
+    },
+    {
+      "path": "DOC/unRarLicense.txt",
+      "name": "unRAR-License.txt",
+      "sha256": "17BD9FA4399092C777536FFF045B41DF76EC9D2AC4C9B8E7345D3B8B6CCC7976"
+    }
+  ]
+}

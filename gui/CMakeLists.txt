@@ -4,7 +4,15 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
+set(GGZIP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../shell/res/ggzip.ico")
+set(GGZIP_RESOURCE_DESCRIPTION "ggZip Archive Manager")
+set(GGZIP_RESOURCE_FILENAME "ggzip_gui.exe")
+set(GGZIP_RESOURCE_TYPE "0x1L")
+configure_file(../cmake/windows.rc.in "${CMAKE_CURRENT_BINARY_DIR}/ggzip_gui.rc" @ONLY)
+
 qt_add_executable(ggzip_gui WIN32
+    "${CMAKE_CURRENT_BINARY_DIR}/ggzip_gui.rc"
+    resources.qrc
     src/main.cpp
     src/MainWindow.h     src/MainWindow.cpp
     src/ArchiveTableModel.h  src/ArchiveTableModel.cpp

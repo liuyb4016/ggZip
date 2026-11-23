@@ -17,12 +17,16 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      - name: Prepare pinned 7-Zip engine
+        shell: pwsh
+        run: |
+          $engine = .\packaging\prepare-engine.ps1
+          "GGZIP_7Z=$($engine.Directory)\7z.exe" >> $env:GITHUB_ENV
+
       - name: Smoke test
         shell: pwsh
-        env:
-          GGZIP_7Z: C:\Program Files\7-Zip\7z.exe
         run: |
-          & .\build\tests\Release\ggzip_smoke.exe
+          ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-msvc-shell:

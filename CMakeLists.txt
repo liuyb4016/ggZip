@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(ggZip VERSION 0.3.0 LANGUAGES CXX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" GGZIP_VERSION LIMIT_COUNT 1)
+project(ggZip VERSION ${GGZIP_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +13,7 @@ add_subdirectory(core)
 add_subdirectory(cli)
 
 if(GGZ_BUILD_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 

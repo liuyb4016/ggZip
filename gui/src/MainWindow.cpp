@@ -4,11 +4,13 @@
 #include "ProgressRunner.h"
 #include "ggzip/ArchiveError.h"
 #include "ggzip/EngineFactory.h"
+#include "ggzip/FileAssociations.h"
 #include "ggzip/IEngine.h"
 #include "ggzip/SmartExtract.h"
 #include <QAction>
 #include <QApplication>
 #include <QDir>
+#include <QDesktopServices>
 #include <QDragEnterEvent>
 #include <QFile>
 #include <QDropEvent>
@@ -27,6 +29,7 @@
 #include <QStyle>
 #include <QTableView>
 #include <QToolBar>
+#include <QUrl>
 #include <qt_windows.h>
 #include <shellapi.h>
 #include <algorithm>
@@ -117,6 +120,36 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         dlg.exec();
     });
     settingsMenu->addAction(actPwMgr);
+    QMenu* associationsMenu = settingsMenu->addMenu("文件关联(&A)");
+    associationsMenu->addAction("注册到「打开方式」...", this, [this] {
+        if (QMessageBox::question(this, "注册文件关联",
+                "将 ggZip 添加到压缩包的「打开方式」和系统默认应用列表。\n"
+                "不会修改现有默认应用；选为默认后，压缩包图标和双击打开才会使用 ggZip。\n\n"
+                "是否继续？") != QMessageBox::Yes) return;
+        try {
+            ggzip::registerFileAssociations(QApplication::applicationFilePath().toStdWString());
+            QMessageBox::information(this, "文件关联",
+                "已注册。请通过「设置 → 文件关联 → 系统默认应用」自行选择 ggZip。");
+        } catch (const std::exception& error) {
+            QMessageBox::critical(this, "注册失败", QString::fromUtf8(error.what()));
+        }
+    });
+    associationsMenu->addAction("移除 ggZip 文件关联...", this, [this] {
+        if (QMessageBox::question(this, "移除文件关联",
+                "仅移除本程序注册的关联，不修改其他程序设置。\n"
+                "若 ggZip 已是默认应用，移除后可能需要重新选择默认应用。\n\n是否继续？")
+            != QMessageBox::Yes) return;
+        try {
+            ggzip::unregisterFileAssociations(QApplication::applicationFilePath().toStdWString());
+            QMessageBox::information(this, "文件关联", "已完成清理；其他安装副本的关联会保留。");
+        } catch (const std::exception& error) {
+            QMessageBox::critical(this, "移除失败", QString::fromUtf8(error.what()));
+        }
+    });
+    associationsMenu->addAction("系统默认应用...", this, [this] {
+        if (!QDesktopServices::openUrl(QUrl("ms-settings:defaultapps")))
+            QMessageBox::warning(this, "默认应用", "无法打开系统设置，请在 Windows 设置中打开「默认应用」。");
+    });
 
     auto* toolBar = addToolBar("主工具栏");
     toolBar->setMovable(false);
@@ -417,9 +450,9 @@ QString MainWindow::previewTempRoot() {
 
 void MainWindow::warnEngineMissing() {
     QMessageBox::warning(this, "ggZip",
-                         "未找到 7z.exe 压缩引擎。\n\n"
-                         "请安装 7-Zip（https://www.7-zip.org），或将 7z.exe 放到 "
-                         "ggZip 程序同目录，或设置环境变量 GGZIP_7Z。");
+                         "内置 7-Zip 引擎文件缺失。\n\n"
+                         "请重新安装或完整解压 ggZip，保留程序旁的 7z 子目录。\n"
+                         "源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。");
 }
 
 void MainWindow::updateActionStates() {

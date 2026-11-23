@@ -25,7 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.decide.outputs.build }}
+      date: ${{ steps.meta.outputs.date }}
     steps:
+      - name: 计算日期（北京时间）
+        id: meta
+        run: echo "date=$(TZ=Asia/Shanghai date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
       - name: 与最近一次 nightly 比较
         id: decide
         env:
@@ -45,61 +50,45 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-  nightly:
-    name: 构建并发布 nightly
+  packages:
     needs: gate
     if: needs.gate.outputs.build == 'true'
-    runs-on: windows-latest
+    uses: ./.github/workflows/package.yml
+    with:
+      package_name: ggZip-nightly-${{ needs.gate.outputs.date }}-win64
+
+  nightly:
+    name: 发布完整 nightly
+    needs: [gate, packages]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: 计算日期（北京时间）
-        id: meta
-        shell: bash
-        run: echo "date=$(TZ=Asia/Shanghai date +%Y%m%d)" >> "$GITHUB_OUTPUT"
-
-      - name: Configure
-        run: cmake -S . -B build -A x64 -DGGZ_BUILD_TESTS=ON
-
-      - name: Build
-        run: cmake --build build --config Release
-
-      - name: Smoke test
-        shell: pwsh
-        env:
-          GGZIP_7Z: C:\Program Files\7-Zip\7z.exe
-        run: |
-          & .\build\tests\Release\ggzip_smoke.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: 打包
-        shell: pwsh
-        env:
-          DATE: ${{ steps.meta.outputs.date }}
-        run: |
-          $stage = "stage/ggZip-nightly-$env:DATE-win64"
-          New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item .\build\cli\Release\ggz.exe $stage\
-          Copy-Item README.md, LICENSE $stage\
-          Compress-Archive -Path $stage -DestinationPath "ggZip-nightly-$env:DATE-win64.zip"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ggzip-windows-packages
+          path: packages
+      - name: 验证产物校验和
+        working-directory: packages
+        run: sha256sum --check *-SHA256SUMS.txt
 
       - name: 发布 nightly Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DATE: ${{ steps.meta.outputs.date }}
+          DATE: ${{ needs.gate.outputs.date }}
         run: |
           TAG="nightly-$DATE"
-          ZIP="ggZip-nightly-$DATE-win64.zip"
           # 同日重跑（如手动强制触发）时先删除旧发布和标签
           gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag
           {
             echo "### ggZip 夜间构建"
             echo
             echo "- 提交：${GITHUB_SHA:0:7} $(git log -1 --pretty=%s)"
-            echo "- 构建：MSVC x64 Release，smoke 测试通过"
+            echo "- 产物：完整便携包、安装包、SHA256 校验和（内置 7-Zip 引擎与 SFX 模块）"
+            echo "- 构建：MSVC x64 Release，核心/文件关联/Shell E2E/安装升级卸载测试通过"
             echo "- 时间：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')（北京时间）"
             echo
             echo "每天北京时间 05:00 自动构建 main 分支；有新提交才会发布新版本。"
           } > notes.md
-          gh release create "$TAG" "$ZIP" --title "ggZip nightly $DATE" --notes-file notes.md --prerelease
+          gh release create "$TAG" packages/*.zip packages/*-setup.exe packages/*-SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "ggZip nightly $DATE" --notes-file notes.md --prerelease

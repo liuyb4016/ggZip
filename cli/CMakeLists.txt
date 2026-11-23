@@ -1,4 +1,10 @@
 add_executable(ggzip src/main.cpp)
+set(GGZIP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../shell/res/ggzip.ico")
+set(GGZIP_RESOURCE_DESCRIPTION "ggZip Command Line")
+set(GGZIP_RESOURCE_FILENAME "ggz.exe")
+set(GGZIP_RESOURCE_TYPE "0x1L")
+configure_file(../cmake/windows.rc.in "${CMAKE_CURRENT_BINARY_DIR}/ggz.rc" @ONLY)
+target_sources(ggzip PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/ggz.rc")
 target_link_libraries(ggzip PRIVATE ggzip_core)
 set_target_properties(ggzip PROPERTIES OUTPUT_NAME "ggz")
 

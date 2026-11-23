@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="ggzip.ico">../shell/res/ggzip.ico</file>
+    </qresource>
+</RCC>

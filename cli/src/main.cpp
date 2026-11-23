@@ -186,9 +186,9 @@ int wmain(int argc, wchar_t** argv) {
                                   cmd == L"smart-extract" || cmd == L"create" ||
                                   cmd == L"test");
         if (needsEngine && !engine->available()) {
-            errln("未找到 7z.exe 压缩引擎。\n"
-                  "请安装 7-Zip（https://www.7-zip.org），或将 7z.exe 放在 ggz.exe 同目录，\n"
-                  "或设置环境变量 GGZIP_7Z 指向 7z.exe。");
+            errln("内置 7-Zip 引擎文件缺失。\n"
+                  "请重新安装或完整解压 ggZip，保留 7z 子目录。\n"
+                  "源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。");
             return 1;
         }
 
@@ -249,7 +249,7 @@ int wmain(int argc, wchar_t** argv) {
             return 0;
         }
         if (cmd == L"version" || cmd == L"--version") {
-            outln("ggz (ggZip) 0.3.0");
+            outln("ggz (ggZip) " GGZIP_VERSION);
             return 0;
         }
         outln(kUsage);
