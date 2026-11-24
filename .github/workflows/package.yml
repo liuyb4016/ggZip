@@ -50,6 +50,13 @@ jobs:
           .\packaging\build.ps1 -QtDir "$env:GITHUB_WORKSPACE\Qt\6.9.3\msvc2022_64" `
             -IsccPath $env:GGZIP_ISCC -PackageName $env:PACKAGE_NAME -RunShellTests
 
+      - name: Isolated FAT32/exFAT transactions and disk-full recovery
+        shell: pwsh
+        # 发布门禁：必须在一次性 runner 的真实 FAT32/exFAT 卷上验证事务与磁盘满恢复，
+        # 不能用单卷 CTest 的跳过结果替代（见 packaging/VALIDATION.md）。
+        run: |
+          .\packaging\test-filesystems.ps1 -TestExecutable .\build-package\tests\Release\ggzip_cross_volume_test.exe
+
       - name: Installer integration test
         shell: pwsh
         run: |
