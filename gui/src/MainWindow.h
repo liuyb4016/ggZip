@@ -19,6 +19,7 @@ class QTableView;
 class QAction;
 class QModelIndex;
 class QCloseEvent;
+class QResizeEvent;
 class QDialog;
 class QLineEdit;
 class QCheckBox;
@@ -40,6 +41,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     enum class Op { None, List, Extract, Create, Preview, Test, Edit };
@@ -63,6 +65,7 @@ private:
     void saveWindowSettings();
     void startEdit(int operation);
     void runEdit(ggzip::EditOptions options);
+    void updateEmptyState();
 
     std::unique_ptr<ggzip::IEngine> engine_;
     ProgressRunner* runner_ = nullptr;
@@ -70,6 +73,9 @@ private:
     QTableView* table_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QLabel* pathLabel_ = nullptr;
+    QWidget* emptyState_ = nullptr;
+    QLabel* emptyTitle_ = nullptr;
+    QLabel* emptyHint_ = nullptr;
     QAction* actUp_ = nullptr;
     QProgressDialog* progress_ = nullptr;
 

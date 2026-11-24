@@ -1,4 +1,5 @@
 #include "Preferences.h"
+#include "Theme.h"
 #include "ggzip/PasswordStore.h"
 #include <QCheckBox>
 #include <QComboBox>
@@ -66,6 +67,17 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
     language->addItem("简体中文", "zh_CN");
     language->addItem("English", "en");
     language->setCurrentIndex(language->findData(settings.value("ui/language", "zh_CN")));
+
+    auto* theme = new QComboBox;
+    theme->addItem(tr("跟随系统"), "system");
+    theme->addItem(tr("浅色"), "light");
+    theme->addItem(tr("深色"), "dark");
+    theme->setCurrentIndex(theme->findData(settings.value("ui/theme", "system")));
+    const ggzipui::ThemeMode themeBefore = ggzipui::configuredTheme();
+    connect(theme, &QComboBox::currentIndexChanged, this, [this, theme](int) {
+        ggzipui::applyTheme(ggzipui::themeModeFromString(theme->currentData().toString()));
+    });
+
     auto* output = new QLineEdit(settings.value("paths/output").toString());
     auto* level = new QSpinBox;
     level->setRange(0, 9);
@@ -89,16 +101,23 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
     });
     auto* form = new QFormLayout;
     form->addRow(tr("语言（重启生效）:"), language);
+    form->addRow(tr("主题:"), theme);
     form->addRow(tr("常用输出目录:"), output);
     form->addRow(tr("默认压缩级别:"), level);
     form->addRow(tr("预览文件上限:"), bytes);
     form->addRow(tr("图片像素上限:"), pixels);
     form->addRow(tr("预览总超时:"), timeout);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(buttons, &QDialogButtonBox::accepted, this, [this, output, level, bytes, pixels, timeout, language] {
+    connect(buttons, &QDialogButtonBox::rejected, this, [this, themeBefore] {
+        ggzipui::applyTheme(themeBefore);
+        reject();
+    });
+    connect(buttons, &QDialogButtonBox::accepted, this, [this, output, level, bytes, pixels, timeout, language, theme] {
         QSettings preferences;
-        preferences.setValue("ui/language", language->currentData());
+        const QString newLanguage = language->currentData().toString();
+        if (newLanguage != preferences.value("ui/language", "zh_CN").toString()) needsRestart_ = true;
+        preferences.setValue("ui/language", newLanguage);
+        preferences.setValue("ui/theme", theme->currentData().toString());
         preferences.setValue("paths/output", output->text().trimmed());
         preferences.setValue("create/level", level->value());
         preferences.setValue("preview/maxBytes", static_cast<qulonglong>(bytes->value()) * 1024 * 1024);

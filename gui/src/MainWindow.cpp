@@ -34,11 +34,14 @@
 #include <QProgressDialog>
 #include <QStatusBar>
 #include <QStyle>
+#include <QSize>
+#include <QVBoxLayout>
 #include <QTableView>
 #include <QToolBar>
 #include <QUrl>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QResizeEvent>
 #include <QPushButton>
 #include <QThread>
 #include <QSettings>
@@ -98,7 +101,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     table_->setAlternatingRowColors(true);
     table_->setWordWrap(false);
     table_->setSortingEnabled(true);   // 点击表头排序（模型 sort() 覆盖实现）
+    table_->setIconSize(QSize(20, 20));
+    table_->verticalHeader()->setDefaultSectionSize(30);  // 统一行高，容纳类型图标
     setCentralWidget(table_);
+
+    // ---- 空状态引导（覆盖在表格之上，无条目且未打开压缩包时显示）----
+    emptyState_ = new QWidget(this);
+    emptyState_->setObjectName("emptyState");
+    auto* emptyLayout = new QVBoxLayout(emptyState_);
+    emptyLayout->setAlignment(Qt::AlignCenter);
+    auto* emptyIcon = new QLabel(emptyState_);
+    emptyIcon->setAlignment(Qt::AlignCenter);
+    emptyIcon->setPixmap(style()->standardIcon(QStyle::SP_DirOpenIcon)
+                             .pixmap(QSize(56, 56)));
+    emptyTitle_ = new QLabel(tr("打开一个压缩包开始浏览"), emptyState_);
+    emptyTitle_->setObjectName("emptyStateTitle");
+    emptyTitle_->setAlignment(Qt::AlignCenter);
+    emptyHint_ = new QLabel(tr("把压缩包拖进窗口，或使用  文件 → 打开压缩包"), emptyState_);
+    emptyHint_->setObjectName("emptyStateHint");
+    emptyHint_->setAlignment(Qt::AlignCenter);
+    emptyLayout->addStretch(1);
+    emptyLayout->addWidget(emptyIcon);
+    emptyLayout->addSpacing(10);
+    emptyLayout->addWidget(emptyTitle_);
+    emptyLayout->addWidget(emptyHint_);
+    emptyLayout->addStretch(1);
+    // 搜索、目录导航都会触发 modelReset，据此同步空状态文案与显隐
+    connect(model_, &QAbstractItemModel::modelReset, this, &MainWindow::updateEmptyState);
 
     runner_ = new ProgressRunner(this);
 
@@ -163,6 +192,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     settingsMenu->addAction(tr("常用设置与预览限制…"), this, [this] {
         PreferencesDialog dialog(this);
         dialog.exec();
+        if (dialog.needsRestart())
+            showMessage(this, QMessageBox::Information, tr("设置"),
+                        tr("界面语言已更改，重启 ggZip 后生效。"));
     });
     settingsMenu->addAction(tr("检查更新…"), this, [this] { UpdateDialog dialog(this); dialog.exec(); });
     QMenu* associationsMenu = settingsMenu->addMenu(tr("文件关联(&A)"));
@@ -199,10 +231,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* toolBar = addToolBar(tr("主工具栏"));
     toolBar->setObjectName("mainToolbar");
     toolBar->setMovable(false);
+    toolBar->setIconSize(QSize(18, 18));
     toolBar->addAction(actOpen);
+    toolBar->addSeparator();
     toolBar->addAction(actExtract_);
     toolBar->addAction(actExtractSelected_);
     toolBar->addAction(actSmartExtract_);
+    toolBar->addSeparator();
     toolBar->addAction(actCreate_);
 
     // ---- 导航栏（上级目录 + 当前路径）----
@@ -283,6 +318,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     restoreState(settings.value("window/state").toByteArray());
     table_->horizontalHeader()->restoreState(settings.value("window/columns").toByteArray());
     updateActionStates();
+    updateEmptyState();
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    if (emptyState_ && centralWidget())
+        emptyState_->setGeometry(centralWidget()->geometry());
+}
+
+void MainWindow::updateEmptyState() {
+    if (!emptyState_ || !centralWidget()) return;
+    emptyState_->setGeometry(centralWidget()->geometry());
+
+    if (currentArchive_.isEmpty()) {
+        emptyTitle_->setText(tr("打开一个压缩包开始浏览"));
+        emptyHint_->setText(tr("把压缩包拖进窗口，或使用  文件 → 打开压缩包"));
+        emptyState_->setVisible(true);
+        return;
+    }
+    if (progress_ && progress_->isVisible()) {
+        emptyState_->setVisible(false);  // 读取/处理中，不显示空提示
+        return;
+    }
+    if (model_ && model_->rowCount() == 0) {
+        if (searchEdit_ && !searchEdit_->text().trimmed().isEmpty()) {
+            emptyTitle_->setText(tr("没有匹配的条目"));
+            emptyHint_->setText(tr("试试更换关键词，或勾选「全包搜索」"));
+        } else {
+            emptyTitle_->setText(tr("这个文件夹是空的"));
+            emptyHint_->setText(tr("使用「上级目录」返回，或按 Alt+Up"));
+        }
+        emptyState_->setVisible(true);
+        return;
+    }
+    emptyState_->setVisible(false);
 }
 
 MainWindow::~MainWindow() {
@@ -382,6 +452,7 @@ void MainWindow::openArchive(const QString& path) {
     passwordRequired_ = false;
     currentArchive_ = absolute;
     model_->clear();
+    updateEmptyState();
     statusLabel_->setText(tr("读取中: %1").arg(path));
 
     progress_->setLabelText(tr("读取压缩包中…"));
@@ -609,6 +680,7 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
         case Op::List: {
             model_->setEntries(std::move(pendingEntries_));
             pendingEntries_.clear();
+            updateEmptyState();
             QStringList recent = QSettings().value("history/archives").toStringList();
             recent.removeAll(currentArchive_);
             recent.prepend(currentArchive_);

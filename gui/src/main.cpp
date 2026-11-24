@@ -1,6 +1,7 @@
 // ggZip GUI 入口
 #include "MainWindow.h"
 #include "LanguageManager.h"
+#include "Theme.h"
 #include "ggzip/EngineFactory.h"
 #include "ggzip/FileAssociations.h"
 #include <QApplication>
@@ -17,6 +18,7 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName("ggZip");
     QApplication::setApplicationVersion(GGZIP_VERSION);
     QApplication::setWindowIcon(QIcon(":/ggzip.ico"));
+    ggzipui::applyConfiguredTheme();
     LanguageManager language;
     const QString selectedLanguage = QSettings().value("ui/language", "zh_CN").toString();
     if (!language.loadLanguage(selectedLanguage)) language.loadLanguage("en");

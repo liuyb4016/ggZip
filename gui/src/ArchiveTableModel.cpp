@@ -1,4 +1,5 @@
 #include "ArchiveTableModel.h"
+#include "FileTypeIcon.h"
 #include <algorithm>
 #include <set>
 
@@ -118,14 +119,19 @@ int ArchiveTableModel::columnCount(const QModelIndex& parent) const {
 }
 
 QVariant ArchiveTableModel::data(const QModelIndex& index, int role) const {
-    if (role != Qt::DisplayRole || !index.isValid()) return {};
+    if (!index.isValid()) return {};
     const ggzip::Entry* e = entryAt(index.row());
     if (!e) return {};
-    switch (index.column()) {
-        case 0: return QString::fromStdWString(e->path);
-        case 1: return e->isDir ? QVariant() : ggzHumanSize(e->size);
-        case 2: return e->isDir ? QVariant() : ggzHumanSize(e->packedSize);
-        case 3: return e->isDir ? tr("目录") : tr("文件");
+    if (role == Qt::DecorationRole && index.column() == 0) {
+        return ggzipui::fileTypeIcon(QString::fromStdWString(e->path), e->isDir);
+    }
+    if (role == Qt::DisplayRole) {
+        switch (index.column()) {
+            case 0: return QString::fromStdWString(e->path);
+            case 1: return e->isDir ? QVariant() : ggzHumanSize(e->size);
+            case 2: return e->isDir ? QVariant() : ggzHumanSize(e->packedSize);
+            case 3: return ggzipui::typeDescription(QString::fromStdWString(e->path), e->isDir);
+        }
     }
     return {};
 }

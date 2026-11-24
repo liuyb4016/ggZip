@@ -16,4 +16,8 @@ private:
 class PreferencesDialog : public QDialog {
 public:
     explicit PreferencesDialog(QWidget* parent = nullptr);
+    // 是否有改动需要重启才能生效（目前仅界面语言）
+    bool needsRestart() const { return needsRestart_; }
+private:
+    bool needsRestart_ = false;
 };
