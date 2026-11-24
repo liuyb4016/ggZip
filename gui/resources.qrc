@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
         <file alias="ggzip.ico">../shell/res/ggzip.ico</file>
+        <file alias="translations/en.json">translations/en.json</file>
     </qresource>
 </RCC>

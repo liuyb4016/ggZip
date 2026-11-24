@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <winioctl.h>
+#include <aclapi.h>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -27,6 +28,26 @@ bool throws(const std::function<void()>& operation) {
     try { operation(); }
     catch (const std::exception&) { return true; }
     return false;
+}
+
+bool privateAcl(const QString& path) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PSID owner = nullptr;
+    PACL dacl = nullptr;
+    const DWORD error = GetNamedSecurityInfoW(const_cast<wchar_t*>(path.toStdWString().c_str()), SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &dacl, nullptr, &descriptor);
+    if (error != ERROR_SUCCESS || !dacl || !owner) { if (descriptor) LocalFree(descriptor); return false; }
+    bool privatePermissions = dacl->AceCount == 2;
+    for (DWORD index = 0; index < dacl->AceCount; ++index) {
+        void* entry = nullptr;
+        if (!GetAce(dacl, index, &entry)) { privatePermissions = false; break; }
+        const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(entry);
+        const auto sid = const_cast<DWORD*>(&ace->SidStart);
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE ||
+            (!EqualSid(sid, owner) && !IsWellKnownSid(sid, WinLocalSystemSid))) privatePermissions = false;
+    }
+    LocalFree(descriptor);
+    return privatePermissions;
 }
 
 QByteArray readFile(const QString& path) {
@@ -97,8 +118,10 @@ int main(int argc, char** argv) {
         const QString firstRoot = first->rootPath();
         const QString secondRoot = second->rootPath();
         check(firstRoot != secondRoot, "sessions use distinct roots");
+        check(privateAcl(firstRoot) && privateAcl(secondRoot), "preview roots grant access only to their owner and SYSTEM");
         const QString firstFile = extract(*first, "FIRST");
         const QString secondFile = extract(*second, "SECOND");
+        check(privateAcl(firstFile) && privateAcl(secondFile), "plaintext preview files retain private inherited permissions");
         check(firstFile != secondFile && readFile(firstFile) == "FIRST" && readFile(secondFile) == "SECOND",
               "same member names are isolated across instances");
         first.reset();
@@ -155,14 +178,11 @@ int main(int argc, char** argv) {
             const QString root = changed->rootPath();
             const QString file = extract(*changed, "MOVED");
             const QString moved = root + "-moved";
-            check(QDir().rename(root, moved), "prepare replaced session directory");
-            QDir().mkdir(root);
-            const QString marker = QDir(root).filePath("foreign.txt");
-            writeFile(marker, "PRESERVE");
+            check(!QDir().rename(root, moved), "active preview session rejects directory replacement");
+            check(readFile(file) == "MOVED", "directory locking preserves active preview contents");
             changed.reset();
-            check(readFile(marker) == "PRESERVE" &&
-                  readFile(QDir(moved).filePath(file.mid(root.size() + 1))) == "MOVED",
-                  "directory identity prevents deleting replacement roots");
+            check(!QFileInfo::exists(root) && !QFileInfo::exists(moved),
+                  "directory locks are released before owned session cleanup");
         }
         {
             auto linked = std::make_unique<PreviewSession>(parent.path());

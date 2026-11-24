@@ -29,6 +29,26 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Isolated FAT32 and exFAT transactions and disk-full recovery
+        shell: pwsh
+        run: |
+          .\packaging\test-filesystems.ps1 -TestExecutable .\build\tests\Release\ggzip_cross_volume_test.exe
+
+      - name: Record bounded archive performance
+        shell: pwsh
+        run: |
+          .\packaging\test-performance.ps1 -BuildDir build -OutputDir out\performance-ci-core `
+            -LargeMiB 64 -SmallFiles 1000 -Iterations 2
+
+      - name: Upload archive performance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ggzip-archive-performance
+          path: out/performance-ci-core/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
   windows-msvc-shell:
     runs-on: windows-latest
     steps:

@@ -28,6 +28,9 @@ void ProgressRunner::run(WorkFn work) {
                 this, [this, pct] { emit progress((int)pct); },
                 Qt::QueuedConnection);
         });
+    } catch (const ggzip::ArchiveError& error) {
+        ok = false;
+        err = tr("任务失败（%1）").arg(QString::fromLatin1(error.code())) + "\n" + QString::fromUtf8(error.what());
     } catch (const std::exception& e) {
         ok = false;
         err = QString::fromUtf8(e.what());

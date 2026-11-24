@@ -42,7 +42,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
-    enum class Op { None, List, Extract, Create, Preview, Test };
+    enum class Op { None, List, Extract, Create, Preview, Test, Edit };
 
     void startExtract(bool smartDefault, bool selectedOnly = false);
     void startCreate();
@@ -61,6 +61,8 @@ private:
     void clearPassword();
     void refreshRecentMenu();
     void saveWindowSettings();
+    void startEdit(int operation);
+    void runEdit(ggzip::EditOptions options);
 
     std::unique_ptr<ggzip::IEngine> engine_;
     ProgressRunner* runner_ = nullptr;
@@ -76,12 +78,17 @@ private:
     QAction* actCreate_ = nullptr;
     QAction* actTest_ = nullptr;
     QAction* actExtractSelected_ = nullptr;
+    QAction* actAddMembers_ = nullptr;
+    QAction* actAddFolder_ = nullptr;
+    QAction* actDeleteMembers_ = nullptr;
+    QAction* actRenameMember_ = nullptr;
     QLineEdit* searchEdit_ = nullptr;
     QCheckBox* searchAll_ = nullptr;
     QMenu* recentMenu_ = nullptr;
     QString sessionPassword_;
     bool passwordRequired_ = false;
     ggzip::Entry previewEntry_;
+    ggzip::EditOptions pendingEdit_;
 
     Op currentOp_ = Op::None;
     QString currentArchive_;

@@ -10,6 +10,7 @@ class ArchiveError : public std::runtime_error {
 public:
     explicit ArchiveError(std::string utf8Message)
         : std::runtime_error(std::move(utf8Message)) {}
+    virtual const char* code() const noexcept { return "GGZIP_OPERATION_FAILED"; }
 };
 
 } // namespace ggzip

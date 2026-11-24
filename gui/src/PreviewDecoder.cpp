@@ -19,6 +19,8 @@ int main(int argc, char** argv) {
     QImageReader reader(&input);
     QImageReader::setAllocationLimit(1024);
     reader.setDecideFormatFromContent(true);
+    const QList<QByteArray> allowed{"png", "jpeg", "jpg", "gif", "bmp", "webp", "ico"};
+    if (!allowed.contains(reader.format().toLower())) return 7;
     const QSize dimensions = reader.size();
     if (!dimensions.isValid() || static_cast<std::uint64_t>(dimensions.width()) * dimensions.height() > limit)
         return 3;

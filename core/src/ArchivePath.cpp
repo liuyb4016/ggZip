@@ -1,5 +1,6 @@
 #include "ggzip/ArchivePath.h"
 #include "ggzip/ArchiveError.h"
+#include "ggzip/Diagnostics.h"
 #include <algorithm>
 #include <cwctype>
 
@@ -26,11 +27,11 @@ std::wstring validatedPreviewPath(std::wstring_view path) {
     std::wstring normalized(path);
     std::replace(normalized.begin(), normalized.end(), L'\\', L'/');
     if (normalized.empty() || normalized.front() == L'/' || normalized.back() == L'/')
-        throw ArchiveError("不安全的预览条目路径");
+        throw ArchiveError(diagnostic("不安全的预览条目路径"));
     for (const wchar_t character : normalized) {
         if (character < 32 || character == 127 ||
             std::wstring_view(L":<>\"|?*").find(character) != std::wstring_view::npos)
-            throw ArchiveError("预览条目包含不允许的路径字符");
+            throw ArchiveError(diagnostic("预览条目包含不允许的路径字符"));
     }
     std::size_t start = 0;
     for (;;) {
@@ -38,7 +39,7 @@ std::wstring validatedPreviewPath(std::wstring_view path) {
         const std::wstring component = normalized.substr(start, separator - start);
         if (component.empty() || component == L"." || component == L".." ||
             component.back() == L'.' || component.back() == L' ' || reservedName(component))
-            throw ArchiveError("预览条目包含不安全的路径部分");
+            throw ArchiveError(diagnostic("预览条目包含不安全的路径部分"));
         if (separator == std::wstring::npos) break;
         start = separator + 1;
     }

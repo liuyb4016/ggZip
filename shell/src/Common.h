@@ -22,6 +22,9 @@ inline const wchar_t* clsidString() {
     return L"{28250246-8FC5-415D-95E3-6102C059ECEF}";
 }
 
+DEFINE_GUID(CLSID_ggZipExplorerCommand,
+    0x9d0f49ad, 0x69c1, 0x43c3, 0xa7, 0x12, 0xf3, 0xcb, 0x64, 0xf6, 0x92, 0x10);
+
 // 存活 COM 对象 RAII 计数：DllCanUnloadNow 依据它判断能否卸载
 struct LiveObjectGuard {
     LiveObjectGuard();

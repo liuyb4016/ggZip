@@ -69,6 +69,25 @@ struct CreateOptions {
     ConflictFn resolveConflict;
 };
 
+struct MemberRename {
+    std::wstring source;
+    std::wstring target;
+};
+
+struct MemberAddition {
+    std::wstring source;
+    std::wstring target;
+};
+
+struct EditOptions {
+    std::wstring password;
+    std::vector<std::wstring> remove;
+    std::vector<MemberRename> rename;
+    std::vector<MemberAddition> add;
+    ConflictPolicy conflict = ConflictPolicy::Reject;
+    ConflictFn resolveConflict;
+};
+
 class IEngine {
 public:
     virtual ~IEngine() = default;
@@ -100,6 +119,9 @@ public:
     virtual void test(const std::wstring& archive, const std::wstring& password,
                       const ProgressFn& onProgress,
                       const std::atomic_bool& cancel) const = 0;
+
+    virtual OperationSummary edit(const std::wstring& archive, const EditOptions& opt,
+                                 const ProgressFn& onProgress, const std::atomic_bool& cancel) const = 0;
 };
 
 } // namespace ggzip

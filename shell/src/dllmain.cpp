@@ -20,6 +20,8 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID) {
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     if (ppv == nullptr) return E_POINTER;
     *ppv = nullptr;
+    if (IsEqualCLSID(rclsid, ggshell::CLSID_ggZipExplorerCommand))
+        return ggshell::ClassFactory::create(riid, ppv, true);
     if (!IsEqualCLSID(rclsid, ggshell::CLSID_ggZipMenu)) return CLASS_E_CLASSNOTAVAILABLE;
     return ggshell::ClassFactory::create(riid, ppv);
 }

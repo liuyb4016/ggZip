@@ -10,6 +10,10 @@ add_library(ggzip_core STATIC
     src/ArchivePath.cpp
     src/FileTransaction.cpp
     src/SourceMark.cpp
+    src/ArchiveEdit.cpp
+    src/SecureDirectory.cpp
+    src/ArchiveVolumes.cpp
+    src/Diagnostics.cpp
 )
 target_include_directories(ggzip_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(ggzip_core PUBLIC UNICODE _UNICODE)
@@ -23,4 +27,4 @@ elseif(MINGW)
 endif()
 
 # DPAPI（密码管理器）
-target_link_libraries(ggzip_core PRIVATE crypt32 advapi32 shell32 bcrypt)
+target_link_libraries(ggzip_core PRIVATE crypt32 advapi32 shell32 bcrypt ole32 psapi)

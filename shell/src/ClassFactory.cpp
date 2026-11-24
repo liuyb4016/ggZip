@@ -1,5 +1,6 @@
 #include "ClassFactory.h"
 #include "ShellMenu.h"
+#include "ExplorerCommand.h"
 
 #include <atomic>
 
@@ -16,16 +17,17 @@ static std::atomic_long& liveObjects() {
 LiveObjectGuard::LiveObjectGuard()  { ++liveObjects(); }
 LiveObjectGuard::~LiveObjectGuard() { --liveObjects(); }
 
-HRESULT ClassFactory::create(REFIID riid, void** ppv) {
+HRESULT ClassFactory::create(REFIID riid, void** ppv, bool modern) {
     auto* f = new (std::nothrow) ClassFactory();
     if (f == nullptr) return E_OUTOFMEMORY;
+    f->modern_ = modern;
     const HRESULT hr = f->QueryInterface(riid, ppv);
     f->Release();
     return hr;
 }
 
 bool ClassFactory::canUnload() {
-    return liveObjects().load() == 0 && s_locks == 0;
+    return liveObjects().load() == 0 && InterlockedCompareExchange(&s_locks, 0, 0) == 0;
 }
 
 STDMETHODIMP ClassFactory::QueryInterface(REFIID riid, void** ppv) {
@@ -52,6 +54,13 @@ STDMETHODIMP ClassFactory::CreateInstance(IUnknown* punkOuter, REFIID riid, void
     if (ppv == nullptr) return E_POINTER;
     *ppv = nullptr;
     if (punkOuter != nullptr) return CLASS_E_NOAGGREGATION;
+    if (modern_) {
+        auto* command = new (std::nothrow) ExplorerCommand();
+        if (!command) return E_OUTOFMEMORY;
+        const auto result = command->QueryInterface(riid, ppv);
+        command->Release();
+        return result;
+    }
     auto* menu = new (std::nothrow) ShellMenu();
     if (menu == nullptr) return E_OUTOFMEMORY;
     const HRESULT hr = menu->QueryInterface(riid, ppv);
@@ -60,7 +69,7 @@ STDMETHODIMP ClassFactory::CreateInstance(IUnknown* punkOuter, REFIID riid, void
 }
 
 STDMETHODIMP ClassFactory::LockServer(BOOL fLock) {
-    if (fLock) ++s_locks; else --s_locks;
+    if (fLock) InterlockedIncrement(&s_locks); else InterlockedDecrement(&s_locks);
     return S_OK;
 }
 

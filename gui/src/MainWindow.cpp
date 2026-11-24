@@ -5,6 +5,8 @@
 #include "PreviewSession.h"
 #include "PreviewImage.h"
 #include "Preferences.h"
+#include "BatchDialog.h"
+#include "UpdateDialog.h"
 #include "ggzip/ArchiveError.h"
 #include "ggzip/OperationError.h"
 #include "ggzip/EngineFactory.h"
@@ -13,6 +15,7 @@
 #include "ggzip/SmartExtract.h"
 #include "ggzip/SourceMark.h"
 #include "ggzip/PasswordError.h"
+#include "ggzip/Text.h"
 #include <QAction>
 #include <QApplication>
 #include <QDesktopServices>
@@ -41,6 +44,8 @@
 #include <QSettings>
 #include <QLineEdit>
 #include <QDir>
+#include <QDirIterator>
+#include <QInputDialog>
 #include <qt_windows.h>
 #include <shellapi.h>
 #include <algorithm>
@@ -51,9 +56,15 @@ namespace {
 
 std::wstring toW(const QString& s) { return s.toStdWString(); }
 
+void showMessage(QWidget* parent, QMessageBox::Icon icon, const QString& title, const QString& text) {
+    QMessageBox message(icon, title, text, QMessageBox::Ok, parent);
+    message.setTextFormat(Qt::PlainText);
+    message.exec();
+}
+
 const wchar_t* kFilter =
     L"压缩包 (*.zip *.7z *.rar *.tar *.gz *.tgz *.bz2 *.tbz *.xz *.txz *.zst *.tzst "
-    L"*.iso *.cab *.wim *.msi *.jar *.apk);;所有文件 (*.*)";
+    L"*.iso *.cab *.wim *.msi *.jar *.apk *.001 *.r[0-9][0-9] *.z[0-9][0-9]*);;所有文件 (*.*)";
 
 bool isImageFile(const QString& name) {
     static const QStringList kExt = { "png", "jpg", "jpeg", "gif",
@@ -92,14 +103,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     runner_ = new ProgressRunner(this);
 
     // ---- 菜单 / 工具栏 ----
-    QMenu* fileMenu = menuBar()->addMenu("文件(&F)");
+    QMenu* fileMenu = menuBar()->addMenu(tr("文件(&F)"));
 
     QAction* actOpen =
-        new QAction(style()->standardIcon(QStyle::SP_DialogOpenButton), "打开压缩包(&O)...", this);
+        new QAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("打开压缩包(&O)..."), this);
     actOpen->setShortcut(QKeySequence::Open);
     connect(actOpen, &QAction::triggered, this, [this] {
-        QString p = QFileDialog::getOpenFileName(this, "打开压缩包", QString(),
-                                                 QString::fromWCharArray(kFilter));
+        QString p = QFileDialog::getOpenFileName(this, tr("打开压缩包"), QString(),
+                                                 tr(ggzip::utf8(kFilter).c_str()));
         if (!p.isEmpty()) openArchive(p);
     });
     fileMenu->addAction(actOpen);
@@ -108,14 +119,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     refreshRecentMenu();
     fileMenu->addSeparator();
 
-    actExtract_ = new QAction(style()->standardIcon(QStyle::SP_ArrowDown), "解压到(&E)...", this);
+    actExtract_ = new QAction(style()->standardIcon(QStyle::SP_ArrowDown), tr("解压到(&E)..."), this);
     connect(actExtract_, &QAction::triggered, this, [this] { startExtract(false); });
 
-    actSmartExtract_ = new QAction("智能解压到(&S)...", this);
+    actSmartExtract_ = new QAction(tr("智能解压到(&S)..."), this);
     actSmartExtract_->setShortcut(QKeySequence("Ctrl+S"));
     connect(actSmartExtract_, &QAction::triggered, this, [this] { startExtract(true); });
 
-    actCreate_ = new QAction(style()->standardIcon(QStyle::SP_DialogSaveButton), "新建压缩包(&C)...", this);
+    actCreate_ = new QAction(style()->standardIcon(QStyle::SP_DialogSaveButton), tr("新建压缩包(&C)..."), this);
     actCreate_->setShortcut(QKeySequence::Save);
     connect(actCreate_, &QAction::triggered, this, [this] { startCreate(); });
 
@@ -125,15 +136,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     fileMenu->addAction(actSmartExtract_);
     fileMenu->addAction(actCreate_);
     actTest_ = fileMenu->addAction(tr("测试压缩包完整性…"), this, &MainWindow::startTest);
+    fileMenu->addAction(tr("批量压缩/解压…"), this, [this] {
+        if (runner_->isRunning()) return;
+        BatchDialog dialog(*engine_, {}, this);
+        dialog.exec();
+    });
+    auto* editMenu = menuBar()->addMenu(tr("编辑压缩包"));
+    actAddMembers_ = editMenu->addAction(tr("添加到压缩包…"), this, [this] { startEdit(0); });
+    actAddFolder_ = editMenu->addAction(tr("添加文件夹..."), this, [this] { startEdit(3); });
+    actDeleteMembers_ = editMenu->addAction(tr("删除选中条目…"), this, [this] { startEdit(1); });
+    actRenameMember_ = editMenu->addAction(tr("重命名选中条目…"), this, [this] { startEdit(2); });
     fileMenu->addSeparator();
 
-    QAction* actQuit = new QAction("退出(&X)", this);
+    QAction* actQuit = new QAction(tr("退出(&X)"), this);
     actQuit->setShortcut(QKeySequence::Quit);
     connect(actQuit, &QAction::triggered, this, &MainWindow::close);
     fileMenu->addAction(actQuit);
 
-    QMenu* settingsMenu = menuBar()->addMenu("设置(&O)");
-    QAction* actPwMgr = new QAction("密码管理器(&P)...", this);
+    QMenu* settingsMenu = menuBar()->addMenu(tr("设置(&O)"));
+    QAction* actPwMgr = new QAction(tr("密码管理器(&P)..."), this);
     connect(actPwMgr, &QAction::triggered, this, [this] {
         PasswordManagerDialog dlg(this);
         dlg.exec();
@@ -143,38 +164,39 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         PreferencesDialog dialog(this);
         dialog.exec();
     });
-    QMenu* associationsMenu = settingsMenu->addMenu("文件关联(&A)");
-    associationsMenu->addAction("注册到「打开方式」...", this, [this] {
-        if (QMessageBox::question(this, "注册文件关联",
-                "将 ggZip 添加到压缩包的「打开方式」和系统默认应用列表。\n"
+    settingsMenu->addAction(tr("检查更新…"), this, [this] { UpdateDialog dialog(this); dialog.exec(); });
+    QMenu* associationsMenu = settingsMenu->addMenu(tr("文件关联(&A)"));
+    associationsMenu->addAction(tr("注册到「打开方式」..."), this, [this] {
+        if (QMessageBox::question(this, tr("注册文件关联"),
+                tr("将 ggZip 添加到压缩包的「打开方式」和系统默认应用列表。\n"
                 "不会修改现有默认应用；选为默认后，压缩包图标和双击打开才会使用 ggZip。\n\n"
-                "是否继续？") != QMessageBox::Yes) return;
+                "是否继续？")) != QMessageBox::Yes) return;
         try {
             ggzip::registerFileAssociations(QApplication::applicationFilePath().toStdWString());
-            QMessageBox::information(this, "文件关联",
-                "已注册。请通过「设置 → 文件关联 → 系统默认应用」自行选择 ggZip。");
+            QMessageBox::information(this, tr("文件关联"),
+                tr("已注册。请通过「设置 → 文件关联 → 系统默认应用」自行选择 ggZip。"));
         } catch (const std::exception& error) {
-            QMessageBox::critical(this, "注册失败", QString::fromUtf8(error.what()));
+            QMessageBox::critical(this, tr("注册失败"), QString::fromUtf8(error.what()));
         }
     });
-    associationsMenu->addAction("移除 ggZip 文件关联...", this, [this] {
-        if (QMessageBox::question(this, "移除文件关联",
-                "仅移除本程序注册的关联，不修改其他程序设置。\n"
-                "若 ggZip 已是默认应用，移除后可能需要重新选择默认应用。\n\n是否继续？")
+    associationsMenu->addAction(tr("移除 ggZip 文件关联..."), this, [this] {
+        if (QMessageBox::question(this, tr("移除文件关联"),
+                tr("仅移除本程序注册的关联，不修改其他程序设置。\n"
+                "若 ggZip 已是默认应用，移除后可能需要重新选择默认应用。\n\n是否继续？"))
             != QMessageBox::Yes) return;
         try {
             ggzip::unregisterFileAssociations(QApplication::applicationFilePath().toStdWString());
-            QMessageBox::information(this, "文件关联", "已完成清理；其他安装副本的关联会保留。");
+            QMessageBox::information(this, tr("文件关联"), tr("已完成清理；其他安装副本的关联会保留。"));
         } catch (const std::exception& error) {
-            QMessageBox::critical(this, "移除失败", QString::fromUtf8(error.what()));
+            QMessageBox::critical(this, tr("移除失败"), QString::fromUtf8(error.what()));
         }
     });
-    associationsMenu->addAction("系统默认应用...", this, [this] {
+    associationsMenu->addAction(tr("系统默认应用..."), this, [this] {
         if (!QDesktopServices::openUrl(QUrl("ms-settings:defaultapps")))
-            QMessageBox::warning(this, "默认应用", "无法打开系统设置，请在 Windows 设置中打开「默认应用」。");
+            QMessageBox::warning(this, tr("默认应用"), tr("无法打开系统设置，请在 Windows 设置中打开「默认应用」。"));
     });
 
-    auto* toolBar = addToolBar("主工具栏");
+    auto* toolBar = addToolBar(tr("主工具栏"));
     toolBar->setObjectName("mainToolbar");
     toolBar->setMovable(false);
     toolBar->addAction(actOpen);
@@ -184,12 +206,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolBar->addAction(actCreate_);
 
     // ---- 导航栏（上级目录 + 当前路径）----
-    actUp_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), "上级目录", this);
+    actUp_ = new QAction(style()->standardIcon(QStyle::SP_ArrowBack), tr("上级目录"), this);
     actUp_->setShortcut(QKeySequence("Alt+Up"));
     actUp_->setEnabled(false);
     connect(actUp_, &QAction::triggered, this, &MainWindow::goUp);
-    pathLabel_ = new QLabel("(根目录)");
-    auto* navBar = addToolBar("导航");
+    pathLabel_ = new QLabel(tr("(根目录)"));
+    pathLabel_->setTextFormat(Qt::PlainText);
+    pathLabel_->setObjectName("archivePath");
+    auto* navBar = addToolBar(tr("导航"));
     navBar->setObjectName("navigationToolbar");
     navBar->setMovable(false);
     navBar->addAction(actUp_);
@@ -210,7 +234,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(searchAll_, &QCheckBox::toggled, this, search);
 
     // ---- 状态栏 / 进度对话框 ----
-    statusLabel_ = new QLabel("把压缩包拖进窗口，或使用 文件-打开压缩包");
+    statusLabel_ = new QLabel(tr("把压缩包拖进窗口，或使用 文件-打开压缩包"));
+    statusLabel_->setTextFormat(Qt::PlainText);
     statusBar()->addWidget(statusLabel_, 1);
 
     progress_ = new QProgressDialog(this);
@@ -219,11 +244,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     progress_->setAutoReset(false);
     progress_->setRange(0, 100);
     progress_->setMinimumDuration(300);
-    progress_->setLabelText("正在处理…");
+    progress_->setLabelText(tr("正在处理…"));
     connect(progress_, &QProgressDialog::canceled, this, [this] {
         runner_->requestCancel();
         if (activeConflict_) activeConflict_->reject();
-        progress_->setLabelText("正在取消…");
+        progress_->setLabelText(tr("正在取消…"));
     });
 
     connect(runner_, &ProgressRunner::progress, this, [this](int pct) {
@@ -245,7 +270,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     if (const ggzip::Entry* e = model_->entryAt(r.row()))
                         total += e->size;
                 }
-                statusLabel_->setText(QString("已选 %1 项，合计 %2")
+                statusLabel_->setText(tr("已选 %1 项，合计 %2")
                                           .arg(sel.size())
                                           .arg(ggzHumanSize(total)));
             });
@@ -357,7 +382,7 @@ void MainWindow::openArchive(const QString& path) {
     passwordRequired_ = false;
     currentArchive_ = absolute;
     model_->clear();
-    statusLabel_->setText("读取中: " + path);
+    statusLabel_->setText(tr("读取中: %1").arg(path));
 
     progress_->setLabelText(tr("读取压缩包中…"));
     progress_->setRange(0, 0);
@@ -378,8 +403,8 @@ void MainWindow::startExtract(bool smartDefault, bool selectedOnly) {
 
     QString archive = currentArchive_;
     if (archive.isEmpty()) {
-        archive = QFileDialog::getOpenFileName(this, "选择要解压的压缩包", QString(),
-                                               QString::fromWCharArray(kFilter));
+        archive = QFileDialog::getOpenFileName(this, tr("选择要解压的压缩包"), QString(),
+                                               tr(ggzip::utf8(kFilter).c_str()));
         if (archive.isEmpty()) return;
     }
 
@@ -399,7 +424,7 @@ void MainWindow::startExtract(bool smartDefault, bool selectedOnly) {
     currentOp_ = Op::Extract;
     summaryReady_ = false;
     opResult_.clear();
-    progress_->setLabelText("解压: " + QFileInfo(archive).fileName());
+    progress_->setLabelText(tr("解压: %1").arg(QFileInfo(archive).fileName()));
     progress_->setValue(0);
     progress_->show();
 
@@ -439,7 +464,7 @@ void MainWindow::startCreate() {
     currentOp_ = Op::Create;
     summaryReady_ = false;
     opResult_.clear();
-    progress_->setLabelText("压缩中: " + QFileInfo(dlg.archivePath()).fileName());
+    progress_->setLabelText(tr("压缩中: %1").arg(QFileInfo(dlg.archivePath()).fileName()));
     progress_->setValue(0);
     progress_->show();
 
@@ -483,6 +508,11 @@ void MainWindow::startTest() {
 }
 
 void MainWindow::runShellAction(const QStringList& arguments) {
+    if (!arguments.isEmpty() && arguments[0] == "batch-extract" && !runner_->isRunning()) {
+        BatchDialog dialog(*engine_, arguments.mid(1), this);
+        dialog.exec();
+        return;
+    }
     if (arguments.size() < 2 || runner_->isRunning()) return;
     const QString operation = arguments[0];
     const std::wstring archive = toW(arguments[1]);
@@ -534,16 +564,17 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
     const Op op = currentOp_;
     currentOp_ = Op::None;
     updateActionStates();
-    if ((op == Op::Extract || op == Op::Create) && summaryReady_) {
+    if ((op == Op::Extract || op == Op::Create || op == Op::Edit) && summaryReady_) {
         const QString state = summary_.outcome == ggzip::Outcome::Completed ? tr("完成") :
             summary_.outcome == ggzip::Outcome::Cancelled ? tr("已取消，完整结果已保留") : tr("部分失败");
         const QString message = tr("%1：完成 %2 项，覆盖 %3 项，跳过 %4 项，重命名 %5 项\n%6")
             .arg(state).arg(summary_.completed).arg(summary_.overwritten).arg(summary_.skipped)
             .arg(summary_.renamed).arg(QString::fromStdWString(summary_.destination));
         setBaseStatus(message);
-        if (!closePending_) QMessageBox::information(this, tr("任务结果"), message +
+        if (!closePending_) showMessage(this, QMessageBox::Information, tr("任务结果"), message +
             (error.isEmpty() ? QString() : "\n" + error));
         if (closePending_) close();
+        else if (op == Op::Edit && summary_.outcome == ggzip::Outcome::Completed) openArchive(currentArchive_);
         return;
     }
     if (closePending_) { close(); return; }
@@ -555,14 +586,15 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
                 if (op == Op::List) openArchive(currentArchive_);
                 else if (op == Op::Preview) openEntryTemp(previewEntry_);
                 else if (op == Op::Test) startTest();
+                else if (op == Op::Edit) runEdit(pendingEdit_);
                 return;
             }
             statusLabel_->setText(tr("密码输入已取消"));
             return;
         }
-        statusLabel_->setText(error.isEmpty() ? "操作已取消" : ("失败: " + error));
+        statusLabel_->setText(error.isEmpty() ? tr("操作已取消") : tr("失败: %1").arg(error));
         if (!error.isEmpty())
-            QMessageBox::warning(this, "ggZip", error);
+            showMessage(this, QMessageBox::Warning, "ggZip", error);
         updateActionStates();
         return;
     }
@@ -585,7 +617,7 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
             refreshRecentMenu();
             const QString name = QFileInfo(currentArchive_).fileName();
             setWindowTitle("ggZip — " + name);
-            setBaseStatus(QString("条目: %1    物理大小: %2")
+            setBaseStatus(tr("条目: %1    物理大小: %2")
                               .arg((int)model_->allCount())
                               .arg(ggzHumanSize(QFileInfo(currentArchive_).size())));
             updatePathUi();
@@ -593,16 +625,17 @@ void MainWindow::onOpFinished(bool ok, const QString& error) {
             break;
         }
         case Op::Extract:
-            statusLabel_->setText("解压完成: " + QString::fromStdWString(opResult_));
+            statusLabel_->setText(tr("解压完成: %1").arg(QString::fromStdWString(opResult_)));
             QMessageBox::information(this, "ggZip",
-                                     "解压完成:\n" + QString::fromStdWString(opResult_));
+                                     tr("解压完成:\n%1").arg(QString::fromStdWString(opResult_)));
             break;
         case Op::Create:
-            statusLabel_->setText("压缩完成: " + QString::fromStdWString(opResult_));
+            statusLabel_->setText(tr("压缩完成: %1").arg(QString::fromStdWString(opResult_)));
             QMessageBox::information(this, "ggZip",
-                                     "已创建: " + QString::fromStdWString(opResult_));
+                                     tr("已创建: %1").arg(QString::fromStdWString(opResult_)));
             break;
         case Op::None:
+        case Op::Edit:
             break;
     }
 }
@@ -631,7 +664,7 @@ void MainWindow::openEntryTemp(const ggzip::Entry& e) {
     }
 
     if (e.isLink) {
-        QMessageBox::warning(this, "ggZip", "不允许预览链接或重解析点条目。");
+        QMessageBox::warning(this, "ggZip", tr("不允许预览链接或重解析点条目。"));
         return;
     }
 
@@ -680,7 +713,7 @@ void MainWindow::showPreview() {
     if (isImageFile(name)) {
         QPixmap pix = QPixmap::fromImage(previewImage_);
         if (pix.isNull()) {
-            QMessageBox::information(this, "ggZip", "该文件不是可预览的图片。");
+            QMessageBox::information(this, "ggZip", tr("该文件不是可预览的图片。"));
         } else {
             PreviewDialog dlg(pix, name, this);
             dlg.exec();
@@ -691,9 +724,9 @@ void MainWindow::showPreview() {
             f.open(QIODevice::ReadOnly) ? f.read(100 * 1024) : QByteArray();
         f.close();
         if (f.error() != QFileDevice::NoError) {
-            QMessageBox::information(this, "ggZip", "无法读取该文件内容。");
+            QMessageBox::information(this, "ggZip", tr("无法读取该文件内容。"));
         } else {
-            TextPreviewDialog dlg(ggzDecodeTextPreview(raw), name,
+            TextPreviewDialog dlg(ggzDecodeTextPreview(raw, QFileInfo(outPath).size() > raw.size()), name,
                                   QFileInfo(outPath).size() > (qint64)raw.size(), this);
             dlg.exec();
         }
@@ -735,9 +768,9 @@ void MainWindow::setBaseStatus(const QString& text) {
 
 void MainWindow::warnEngineMissing() {
     QMessageBox::warning(this, "ggZip",
-                         "内置 7-Zip 引擎文件缺失。\n\n"
+                         tr("内置 7-Zip 引擎文件缺失。\n\n"
                          "请重新安装或完整解压 ggZip，保留程序旁的 7z 子目录。\n"
-                         "源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。");
+                         "源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。"));
 }
 
 void MainWindow::updateActionStates() {
@@ -747,6 +780,13 @@ void MainWindow::updateActionStates() {
     actSmartExtract_->setEnabled(available);
     actExtractSelected_->setEnabled(available && table_->selectionModel()->hasSelection());
     actCreate_->setEnabled(!runner_->isRunning());
+    const auto suffix = QFileInfo(currentArchive_).suffix().toLower();
+    const bool editable = available && (suffix == "zip" || suffix == "7z");
+    const auto selected = table_->selectionModel()->selectedRows().size();
+    actAddMembers_->setEnabled(editable);
+    actAddFolder_->setEnabled(editable);
+    actDeleteMembers_->setEnabled(editable && selected > 0);
+    actRenameMember_->setEnabled(editable && selected == 1);
     actTest_->setEnabled(hasArchive && !runner_->isRunning());
 }
 
@@ -757,6 +797,13 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
 
 void MainWindow::dropEvent(QDropEvent* event) {
     const QList<QUrl> urls = event->mimeData()->urls();
+    if (urls.size() > 1 && !runner_->isRunning()) {
+        QStringList archives;
+        for (const auto& url : urls) if (url.isLocalFile()) archives.push_back(url.toLocalFile());
+        BatchDialog dialog(*engine_, archives, this);
+        dialog.exec();
+        return;
+    }
     for (const QUrl& u : urls) {
         const QString local = u.toLocalFile();
         if (!local.isEmpty()) {
@@ -764,4 +811,66 @@ void MainWindow::dropEvent(QDropEvent* event) {
             break;
         }
     }
+}
+
+void MainWindow::startEdit(int operation) {
+    if (runner_->isRunning() || currentArchive_.isEmpty()) return;
+    const auto suffix = QFileInfo(currentArchive_).suffix().toLower();
+    if (suffix != "zip" && suffix != "7z") {
+        QMessageBox::information(this, tr("编辑压缩包"), tr("仅支持编辑 ZIP/7z，其他格式和分卷保持只读。"));
+        return;
+    }
+    if (model_->hasEncryptedEntries() && sessionPassword_.isEmpty() && !requestArchivePassword()) return;
+    ggzip::EditOptions options;
+    options.password = toW(sessionPassword_);
+    options.conflict = ggzip::ConflictPolicy::Ask;
+    options.resolveConflict = conflictResolver();
+    const auto selected = table_->selectionModel()->selectedRows();
+    if (operation == 1) {
+        if (selected.isEmpty()) return;
+        if (QMessageBox::question(this, tr("编辑压缩包"),
+            tr("是否永久删除选中的 %1 个条目（包含目录后代）？").arg(selected.size()),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+        for (const auto& index : selected) if (const auto* entry = model_->entryAt(index.row()))
+            options.remove.push_back(entry->path);
+    } else if (operation == 2) {
+        if (selected.size() != 1) return;
+        const auto* entry = model_->entryAt(selected.front().row());
+        if (!entry) return;
+        bool accepted = false;
+        const auto name = QInputDialog::getText(this, tr("编辑压缩包"), tr("新条目路径:"),
+            QLineEdit::Normal, QString::fromStdWString(entry->path), &accepted);
+        if (!accepted || name.isEmpty()) return;
+        options.rename.push_back({entry->path, toW(name)});
+    } else if (operation == 3) {
+        const auto folder = QFileDialog::getExistingDirectory(this, tr("选择文件夹"));
+        if (folder.isEmpty()) return;
+        options.add.push_back({toW(folder), toW(model_->prefix() + QFileInfo(folder).fileName())});
+    } else {
+        const auto files = QFileDialog::getOpenFileNames(this, tr("选择文件"));
+        if (files.isEmpty()) return;
+        for (const auto& file : files) options.add.push_back({toW(file), toW(model_->prefix() + QFileInfo(file).fileName())});
+    }
+    pendingEdit_ = options;
+    pendingEdit_.password.clear();
+    runEdit(std::move(options));
+}
+
+void MainWindow::runEdit(ggzip::EditOptions options) {
+    options.password = toW(sessionPassword_);
+    currentOp_ = Op::Edit;
+    passwordRequired_ = false;
+    summaryReady_ = false;
+    progress_->setLabelText(tr("安全编辑中…"));
+    progress_->setValue(0);
+    progress_->show();
+    const auto archive = toW(currentArchive_);
+    runner_->start([this, archive, options](const std::atomic_bool& cancel, const ProgressRunner::OnProgress& progress) {
+        try {
+            summary_ = engine_->edit(archive, options, [&](const ggzip::Progress& value) { progress(value.percent); }, cancel);
+            summaryReady_ = true;
+        } catch (const ggzip::PasswordError&) { passwordRequired_ = true; throw; }
+        catch (const ggzip::OperationError& error) { summary_ = error.summary; summaryReady_ = true; throw; }
+    });
+    updateActionStates();
 }

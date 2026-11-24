@@ -3,8 +3,10 @@
 #include "FileTransaction.h"
 #include "ggzip/OperationError.h"
 #include "ggzip/ArchiveError.h"
+#include "ggzip/Diagnostics.h"
 #include "ggzip/Format.h"
 #include "ggzip/ArchivePath.h"
+#include "ggzip/ArchiveVolumes.h"
 #include "ggzip/SourceMark.h"
 #include "ggzip/PasswordError.h"
 #include "ggzip/Text.h"
@@ -28,13 +30,14 @@ bool fileExists(const std::wstring& p) {
 }
 
 void requireFile(const std::wstring& p, const char* what) {
-    if (!fileExists(p)) throw ArchiveError(std::string(what) + ": 文件不存在 - " + utf8(p));
+    if (!fileExists(p)) throw ArchiveError(std::string(what) + diagnostic(": 文件不存在 - ") + utf8(p));
 }
 
 bool passwordFailure(std::string message) {
     std::transform(message.begin(), message.end(), message.begin(),
         [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return message.find("wrong password") != std::string::npos ||
+           message.find("enter password") != std::string::npos ||
            message.find("password is incorrect") != std::string::npos ||
            message.find("can not open encrypted archive") != std::string::npos;
 }
@@ -91,7 +94,7 @@ Listing parseListing(const std::string& text, bool strict = false) {
             return;
         }
         if (!fields.count("Size")) {
-            if (strict) throw ArchiveError("条目信息缺少大小字段");
+            if (strict) throw ArchiveError(diagnostic("条目信息缺少大小字段"));
             return;
         }
 
@@ -143,7 +146,7 @@ Listing parseListing(const std::string& text, bool strict = false) {
         if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
         if (line.empty()) continue;
         if (line == "----------") {
-            if (readingEntries) throw ArchiveError("压缩包包含不明确的条目信息边界");
+            if (readingEntries) throw ArchiveError(diagnostic("压缩包包含不明确的条目信息边界"));
             flush();
             readingEntries = true;
             continue;
@@ -158,7 +161,7 @@ Listing parseListing(const std::string& text, bool strict = false) {
         if (eq != std::string_view::npos) {
             const std::string key(line.substr(0, eq));
             if (strict && cur.count(key))
-                throw ArchiveError("预览条目信息包含重复字段，不能安全解析");
+                throw ArchiveError(diagnostic("预览条目信息包含重复字段，不能安全解析"));
             cur[key] = std::string(line.substr(eq + 3));
         }
     }
@@ -174,31 +177,20 @@ bool SevenZipEngine::available() const { return !exe_.empty(); }
 std::wstring SevenZipEngine::enginePath() const { return exe_; }
 
 std::wstring SevenZipEngine::resolveFirstVolume(const std::wstring& path) const {
-    const fs::path input(path);
-    const auto suffix = input.extension().wstring();
-    if (suffix.size() >= 4 && std::all_of(suffix.begin() + 1, suffix.end(),
-        [](wchar_t character) { return character >= L'0' && character <= L'9'; })) {
-        fs::path first = input;
-        first.replace_extension(L".001");
-        if (fileExists(first.wstring())) return first.wstring();
-    }
-    if (fileExists(path)) return path;
-    const std::wstring v1 = path + L".001";
-    if (fileExists(v1)) return v1;
-    return path;  // 保持原路径，requireFile 会给出清晰错误
+    return archiveVolumes(path).first.wstring();
 }
 
 void SevenZipEngine::ensure() const {
     if (exe_.empty())
-        throw ArchiveError("内置 7-Zip 引擎文件缺失。请重新安装或完整解压 ggZip，保留 7z 子目录。"
-                    "源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。");
+        throw ArchiveError(std::string(diagnostic("内置 7-Zip 引擎文件缺失。请重新安装或完整解压 ggZip，保留 7z 子目录。")) +
+                    diagnostic("源码开发时可设置 GGZIP_7Z 指向自备的 7z.exe。"));
 }
 
 ArchiveInfo SevenZipEngine::inspect(const std::wstring& archive,
                                     std::vector<Entry>* entries, const InspectOptions& opt) const {
     ensure();
     const std::wstring real = resolveFirstVolume(archive);
-    requireFile(real, "压缩包");
+    requireFile(real, diagnostic("压缩包"));
     std::string text;
     static std::atomic_bool noCancel{ false };
     std::vector<std::wstring> arguments{ L"l", L"-slt", L"-sccUTF-8" };
@@ -207,15 +199,15 @@ ArchiveInfo SevenZipEngine::inspect(const std::wstring& archive,
     arguments.push_back(real);
     proc::RunResult r = proc::run(exe_, arguments,
         [&](std::string_view chunk) {
-            if (chunk.size() > opt.maxListingBytes - text.size()) throw ArchiveError("条目列表超过资源限制");
+            if (chunk.size() > opt.maxListingBytes - text.size()) throw ArchiveError(diagnostic("条目列表超过资源限制"));
             text.append(chunk);
             return true;
         }, opt.cancel ? *opt.cancel : noCancel, {opt.deadlineTick});
-    if (opt.cancel && opt.cancel->load()) throw ArchiveError("读取压缩包已取消");
+    if (opt.cancel && opt.cancel->load()) throw ArchiveError(diagnostic("读取压缩包已取消"));
     if (r.exitCode != 0) {
-        std::string msg = "读取压缩包失败 (exit " + std::to_string(r.exitCode) + "): " + utf8(archive);
+        std::string msg = diagnostic("读取压缩包失败 (exit ") + std::to_string(r.exitCode) + "): " + utf8(archive);
         if (!r.stderrTail.empty()) msg += "\n" + r.stderrTail;
-        if (passwordFailure(r.stderrTail)) throw PasswordError(msg);
+        if (passwordFailure(r.stderrTail) || passwordFailure(text)) throw PasswordError(msg);
         throw ArchiveError(msg);
     }
     Listing lst = parseListing(text, opt.strict);
@@ -233,7 +225,7 @@ void SevenZipEngine::runWithProgress(std::vector<std::wstring> args,
                                      const ProgressFn& onProgress,
                                      const std::atomic_bool& cancel,
                                      const std::string& what, std::uint64_t deadline,
-                                     const std::function<void()>& monitor) const {
+                                     const std::function<void()>& monitor, const std::wstring& workingDirectory) const {
     const auto endOfOptions = std::find(args.begin(), args.end(), L"--");
     args.insert(endOfOptions, {L"-sccUTF-8", L"-bsp1"});
     std::string buf;
@@ -241,6 +233,7 @@ void SevenZipEngine::runWithProgress(std::vector<std::wstring> args,
     proc::RunOptions limits;
     limits.deadlineTick = deadline;
     limits.monitor = monitor;
+    limits.workingDirectory = workingDirectory;
     proc::RunResult r = proc::run(exe_, args, [&](std::string_view c) {
         buf.append(c);
         if (buf.size() > 8192) buf.erase(0, buf.size() - 8192);
@@ -255,13 +248,13 @@ void SevenZipEngine::runWithProgress(std::vector<std::wstring> args,
     }, cancel, limits);
     if (cancel.load()) return;   // 用户取消：由调用方处理，不作为错误
     if (r.exitCode != 0) {
-        std::string msg = what + " 失败 (exit " + std::to_string(r.exitCode) + ")";
+        std::string msg = what + diagnostic(" 失败 (exit ") + std::to_string(r.exitCode) + ")";
         if (!r.stderrTail.empty()) {
             std::string t = r.stderrTail.size() > 2048
                           ? r.stderrTail.substr(r.stderrTail.size() - 2048) : r.stderrTail;
             msg += "\n" + t;
         }
-        if (passwordFailure(r.stderrTail)) throw PasswordError(msg);
+        if (passwordFailure(r.stderrTail) || passwordFailure(buf)) throw PasswordError(msg);
         throw ArchiveError(msg);
     }
 }
@@ -276,9 +269,13 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
     summary.destination = destination.wstring();
     files::safeParents(destination);
     files::Workspace workspace(destination.parent_path());
-    const fs::path source = fs::absolute(resolveFirstVolume(archive));
-    requireFile(source.wstring(), "压缩包");
-    const unsigned zone = sourceZone(source.wstring());
+    const auto volumes = archiveVolumes(archive);
+    const fs::path source = volumes.first;
+    requireFile(source.wstring(), diagnostic("压缩包"));
+    unsigned zone = 0;
+    for (const auto& part : volumes.parts) zone = std::max(zone, sourceZone(part.wstring()));
+    if (zone && !fileSystemCapabilities(destination).namedStreams)
+        throw ArchiveError(diagnostic("目标文件系统不支持下载来源标记，文件未发布"));
     fs::path base = source;
     const std::wstring suffix = source.extension().wstring();
     if (suffix.size() >= 4 && std::all_of(suffix.begin() + 1, suffix.end(),
@@ -287,24 +284,29 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
     const bool tarWrapped = isTarWrappedExt(base.wstring());
     fs::path snapshot;
     try {
-        const auto sources = base == source ? std::vector<fs::path>{source} : files::family(base);
+        const auto& sources = volumes.parts;
+        std::vector<files::Identity> sourceStates;
         std::uint64_t needed = 16ull * 1024 * 1024;
         for (const auto& part : sources) {
+            sourceStates.push_back(files::identity(part));
             const auto size = fs::file_size(part);
             if (size > std::numeric_limits<std::uint64_t>::max() - needed)
-                throw ArchiveError("输入大小超出支持范围");
+                throw ArchiveError(diagnostic("输入大小超出支持范围"));
             needed += size;
         }
-        if (fs::space(workspace.root).available < needed) throw ArchiveError("磁盘空间不足，无法安全创建输入快照");
+        if (fs::space(workspace.root).available < needed) throw ArchiveError(diagnostic("磁盘空间不足，无法安全创建输入快照"));
         for (const auto& part : sources) {
             const auto copied = workspace.snapshot(part, fs::path(L"source") / part.filename(), cancel);
             if (_wcsicmp(part.wstring().c_str(), source.wstring().c_str()) == 0) snapshot = copied;
         }
+        for (std::size_t index = 0; index < sources.size(); ++index)
+            if (!files::same(files::identity(sources[index]), sourceStates[index]))
+                throw ArchiveError(diagnostic("创建快照期间分卷发生变化，操作未继续"));
     } catch (...) {
         if (cancel.load()) { summary.outcome = Outcome::Cancelled; return summary; }
         throw;
     }
-    if (snapshot.empty()) throw ArchiveError("没有可用的输入快照");
+    if (snapshot.empty()) throw ArchiveError(diagnostic("没有可用的输入快照"));
     std::vector<Entry> entries = list(snapshot.wstring(), {opt.password, true, &cancel, opt.deadlineTick});
     fs::path decoded = workspace.root / L"decoded";
     auto decode = [&](const fs::path& input, const fs::path& output, const std::vector<Entry>& members) {
@@ -319,12 +321,12 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
             std::transform(path.begin(), path.end(), path.begin(),
                 [](wchar_t character) { return static_cast<wchar_t>(std::towupper(character)); });
             if (entry.isLink || !names.insert(path).second)
-                throw ArchiveError("压缩包包含链接或重复的目标路径");
+                throw ArchiveError(diagnostic("压缩包包含链接或重复的目标路径"));
             if (!entry.isDir) fileNames.insert(path);
             normalizedNames.push_back(path);
             if (!entry.isDir) {
                 if (!entry.sizeKnown || entry.size > std::numeric_limits<std::uint64_t>::max() - maximum)
-                    throw ArchiveError("无法可靠确定解压所需空间");
+                    throw ArchiveError(diagnostic("无法可靠确定解压所需空间"));
                 maximum += entry.size;
             }
         }
@@ -332,12 +334,12 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
             for (auto separator = name.find(L'/'); separator != std::wstring::npos;
                  separator = name.find(L'/', separator + 1)) {
                 if (fileNames.count(name.substr(0, separator)))
-                    throw ArchiveError("压缩包中的文件被用作父目录");
+                    throw ArchiveError(diagnostic("压缩包中的文件被用作父目录"));
             }
         }
         const auto available = fs::space(workspace.root).available;
         if (available < maximum || available - maximum < 16ull * 1024 * 1024)
-            throw ArchiveError("磁盘空间不足，无法安全暂存完整解压结果");
+            throw ArchiveError(diagnostic("磁盘空间不足，无法安全暂存完整解压结果"));
         files::makeDirectories(output);
         workspace.adopt(output);
         std::vector<std::wstring> arguments{ L"x", L"-o" + output.wstring(), L"-y", L"-spd", L"-ssc" };
@@ -353,14 +355,14 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
                 const auto state = files::identity(item.path());
                 if (state.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
                 const auto size = item.file_size();
-                if (size > maximum - actual) throw ArchiveError("解压实际输出超过声明大小，操作已停止");
+                if (size > maximum - actual) throw ArchiveError(diagnostic("解压实际输出超过声明大小，操作已停止"));
                 actual += size;
             }
             if (fs::space(workspace.root).available < 16ull * 1024 * 1024)
-                throw ArchiveError("磁盘剩余空间过低，操作已停止");
+                throw ArchiveError(diagnostic("磁盘剩余空间过低，操作已停止"));
         };
         try {
-            runWithProgress(std::move(arguments), onProgress, cancel, "解压", opt.deadlineTick, monitor);
+            runWithProgress(std::move(arguments), onProgress, cancel, diagnostic("解压"), opt.deadlineTick, monitor);
             monitor();
         }
         catch (const std::exception& error) { summary.outcome = Outcome::Failed; summary.diagnostic = error.what(); }
@@ -378,7 +380,7 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
     if (summary.outcome == Outcome::Completed && tarWrapped) {
         std::vector<Entry> files;
         for (const auto& entry : entries) if (!entry.isDir) files.push_back(entry);
-        if (files.size() != 1) throw ArchiveError("内层 tar 结构不明确");
+        if (files.size() != 1) throw ArchiveError(diagnostic("内层 tar 结构不明确"));
         const fs::path inner = decoded / fs::path(files.front().path);
         entries = list(inner.wstring(), {opt.password, true, &cancel, opt.deadlineTick});
         decoded = workspace.root / L"unwrapped";
@@ -448,7 +450,7 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
                 continue;
             }
             if (decision != ConflictPolicy::Rename)
-                throw ConflictError("目录与已有文件冲突，只能跳过或重命名: " + utf8(directory));
+                throw ConflictError(diagnostic("目录与已有文件冲突，只能跳过或重命名: ") + utf8(directory));
             target = files::renamed(target, occupied);
             ++summary.renamed;
         }
@@ -461,6 +463,7 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
         fs::path target;
         files::Identity previous;
         bool renamed = false;
+        files::Identity verifiedState;
     };
     std::vector<Publication> publications;
     for (const auto& entry : entries) {
@@ -472,10 +475,17 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
         if (entry.isDir) continue;
         fs::path target = targetFor(normalized);
         if (target.empty()) { ++summary.skipped; continue; }
-        if (!files::verified(staged, entry, summary.outcome != Outcome::Completed)) {
+        if (zone) {
+            const auto state = files::identity(staged);
+            if (state.exists && !(state.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && state.info.nNumberOfLinks == 1)
+                applySourceZone(staged.wstring(), zone);
+        }
+        files::Identity verifiedState;
+        if (!files::verified(staged, entry, summary.outcome != Outcome::Completed, &cancel, &verifiedState)) {
+            if (cancel.load()) { summary.outcome = Outcome::Cancelled; ++summary.skipped; continue; }
             if (summary.outcome == Outcome::Completed) {
                 summary.outcome = Outcome::Failed;
-                summary.diagnostic = "解压结果缺失或校验失败: " + utf8(entry.path);
+                summary.diagnostic = diagnostic("解压结果缺失或校验失败: ") + utf8(entry.path);
             }
             continue;
         }
@@ -487,7 +497,7 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
             decision = resolver.choose({entry.path, target.wstring(),
                 (previous.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
             if (cancel.load()) { summary.outcome = Outcome::Cancelled; ++summary.skipped; continue; }
-            if (decision == ConflictPolicy::Reject) throw ConflictError("目标已存在: " + utf8(target.wstring()));
+            if (decision == ConflictPolicy::Reject) throw ConflictError(diagnostic("目标已存在: ") + utf8(target.wstring()));
             if (decision == ConflictPolicy::Skip) { ++summary.skipped; continue; }
             if (decision == ConflictPolicy::Rename) {
                 target = files::renamed(target, occupied);
@@ -496,26 +506,29 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
                 rename = true;
             } else {
                 if (previous.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                    throw ConflictError("不能覆盖已有目录");
+                    throw ConflictError(diagnostic("不能覆盖已有目录"));
             }
         }
-        publications.push_back({&entry, staged, target, previous, rename});
+        publications.push_back({&entry, staged, target, previous, rename, verifiedState});
     }
+    const bool crossVolume = !sameVolume(workspace.root, destination);
     for (const auto& publication : publications) {
         if (summary.outcome == Outcome::Completed && cancel.load()) summary.outcome = Outcome::Cancelled;
+        if (crossVolume && cancel.load()) { summary.outcome = Outcome::Cancelled; ++summary.skipped; continue; }
         if (summary.outcome != Outcome::Completed && (publication.previous.exists ||
-            !files::verified(publication.staged, *publication.entry, true))) { ++summary.skipped; continue; }
+            !publication.entry->sizeKnown || !publication.entry->crcKnown)) { ++summary.skipped; continue; }
         try {
-            applySourceZone(publication.staged.wstring(), zone);
             files::commitFamily(workspace, {{publication.staged, publication.target}},
                 publication.previous.exists ? std::vector<fs::path>{publication.target} : std::vector<fs::path>{},
-                publication.previous.exists ? std::vector<files::Identity>{publication.previous} : std::vector<files::Identity>{});
+                publication.previous.exists ? std::vector<files::Identity>{publication.previous} : std::vector<files::Identity>{},
+                {publication.verifiedState}, crossVolume || summary.outcome == Outcome::Completed ? &cancel : nullptr);
         } catch (const OperationError& error) {
             summary.outcome = Outcome::Failed;
             summary.diagnostic = error.what();
             summary.recoveryPath = error.summary.recoveryPath;
             throw OperationError(summary);
         } catch (const std::exception& error) {
+            if (cancel.load()) { summary.outcome = Outcome::Cancelled; break; }
             summary.outcome = Outcome::Failed;
             summary.diagnostic = error.what();
             throw OperationError(summary);
@@ -526,7 +539,10 @@ OperationSummary SevenZipEngine::extract(const std::wstring& archive, const std:
         if (publication.renamed) ++summary.renamed;
     }
     if (summary.outcome == Outcome::Completed) {
-        for (const auto& directory : directoryTargets) files::makeDirectories(directory.second);
+        for (const auto& directory : directoryTargets) {
+            if (cancel.load()) { summary.outcome = Outcome::Cancelled; break; }
+            files::makeDirectories(directory.second);
+        }
     }
     if (summary.outcome == Outcome::Failed) throw OperationError(summary);
     return summary;
@@ -536,11 +552,11 @@ void SevenZipEngine::extractToStream(const std::wstring& archive, const std::wst
                                     const ExtractOptions& opt, const DataFn& onData,
                                     const std::atomic_bool& cancel) const {
     const std::wstring wanted = validatedPreviewPath(member);
-    if (!onData) throw ArchiveError("未提供预览数据接收器");
-    if (cancel.load()) throw ArchiveError("预览提取已取消");
+    if (!onData) throw ArchiveError(diagnostic("未提供预览数据接收器"));
+    if (cancel.load()) throw ArchiveError(diagnostic("预览提取已取消"));
     ensure();
     const std::wstring real = resolveFirstVolume(archive);
-    requireFile(real, "压缩包");
+    requireFile(real, diagnostic("压缩包"));
     std::wstring nativeMember = wanted;
     std::replace(nativeMember.begin(), nativeMember.end(), L'/', L'\\');
     auto arguments = [&](const std::wstring& command, bool streaming) {
@@ -560,40 +576,41 @@ void SevenZipEngine::extractToStream(const std::wstring& archive, const std::wst
     const proc::RunResult listed = proc::run(exe_, arguments(L"l", false),
         [&](std::string_view chunk) {
             if (chunk.size() > 1024 * 1024 - metadata.size())
-                throw ArchiveError("预览条目信息过大");
+                throw ArchiveError(diagnostic("预览条目信息过大"));
             metadata.append(chunk);
             return true;
         }, cancel, {opt.deadlineTick});
-    if (cancel.load()) throw ArchiveError("预览提取已取消");
+    if (cancel.load()) throw ArchiveError(diagnostic("预览提取已取消"));
     if (listed.exitCode != 0)
-        if (passwordFailure(listed.stderrTail)) throw PasswordError("预览需要正确的密码");
-        else throw ArchiveError("无法读取预览条目信息\n" + listed.stderrTail);
+        if (passwordFailure(listed.stderrTail) || passwordFailure(metadata)) throw PasswordError(diagnostic("预览需要正确的密码"));
+        else throw ArchiveError(diagnostic("无法读取预览条目信息\n") + listed.stderrTail);
     const Listing listing = parseListing(metadata, true);
     if (listing.entries.size() != 1)
-        throw ArchiveError("预览必须精确匹配一个条目，缺失或重复的条目不能预览");
+        throw ArchiveError(diagnostic("预览必须精确匹配一个条目，缺失或重复的条目不能预览"));
     const Entry& entry = listing.entries.front();
+    if (entry.encrypted && opt.password.empty()) throw PasswordError(diagnostic("预览需要正确的密码"));
     if (entry.isDir || entry.isLink)
-        throw ArchiveError("不允许预览目录、链接或重解析点条目");
+        throw ArchiveError(diagnostic("不允许预览目录、链接或重解析点条目"));
     if (validatedPreviewPath(entry.path) != wanted)
-        throw ArchiveError("预览条目匹配不一致");
+        throw ArchiveError(diagnostic("预览条目匹配不一致"));
 
     std::uint64_t received = 0;
     const proc::RunResult extracted = proc::run(exe_, arguments(L"x", true),
         [&](std::string_view chunk) {
-            if (cancel.load()) throw ArchiveError("预览提取已取消");
+            if (cancel.load()) throw ArchiveError(diagnostic("预览提取已取消"));
             if (entry.sizeKnown &&
                 (received > entry.size || chunk.size() > entry.size - received))
-                throw ArchiveError("预览数据超过声明的条目大小");
+                throw ArchiveError(diagnostic("预览数据超过声明的条目大小"));
             onData(chunk);
             received += chunk.size();
             return true;
         }, cancel, {opt.deadlineTick});
-    if (cancel.load()) throw ArchiveError("预览提取已取消");
+    if (cancel.load()) throw ArchiveError(diagnostic("预览提取已取消"));
     if (extracted.exitCode != 0)
-        if (passwordFailure(extracted.stderrTail)) throw PasswordError("预览需要正确的密码");
-        else throw ArchiveError("无法提取预览条目\n" + extracted.stderrTail);
+        if (passwordFailure(extracted.stderrTail)) throw PasswordError(diagnostic("预览需要正确的密码"));
+        else throw ArchiveError(diagnostic("无法提取预览条目\n") + extracted.stderrTail);
     if (entry.sizeKnown && received != entry.size)
-        throw ArchiveError("预览数据长度与条目信息不一致");
+        throw ArchiveError(diagnostic("预览数据长度与条目信息不一致"));
 }
 
 OperationSummary SevenZipEngine::create(const std::wstring& archive,
@@ -613,7 +630,7 @@ OperationSummary SevenZipEngine::create(const std::wstring& archive,
                 return (item.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             })});
         if (cancel.load()) { result.outcome = Outcome::Cancelled; return result; }
-        if (policy == ConflictPolicy::Reject) throw ConflictError("目标压缩包或分卷已存在");
+        if (policy == ConflictPolicy::Reject) throw ConflictError(diagnostic("目标压缩包或分卷已存在"));
         if (policy == ConflictPolicy::Skip) { result.destination = target.wstring(); result.skipped = 1; return result; }
         if (policy == ConflictPolicy::Rename) {
             target = files::renamed(target, [](const fs::path& path) { return !files::family(path).empty(); });
@@ -622,7 +639,7 @@ OperationSummary SevenZipEngine::create(const std::wstring& archive,
             result.renamed = 1;
         } else if (std::any_of(expected.begin(), expected.end(), [](const auto& item) {
                 return (item.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            })) throw ConflictError("不能覆盖目录");
+            })) throw ConflictError(diagnostic("不能覆盖目录"));
     }
     result.destination = target.wstring();
     files::Workspace workspace(target.parent_path());
@@ -636,7 +653,7 @@ OperationSummary SevenZipEngine::create(const std::wstring& archive,
         else if (fs::is_directory(root)) prefix = root.filename().wstring();
         else {
             if (_wcsicmp(fs::absolute(root).wstring().c_str(), fs::absolute(archive).wstring().c_str()) == 0)
-                throw ArchiveError("压缩输入不能是目标压缩包本身");
+                throw ArchiveError(diagnostic("压缩输入不能是目标压缩包本身"));
             continue;
         }
         root = fs::absolute(root).lexically_normal();
@@ -659,11 +676,16 @@ OperationSummary SevenZipEngine::create(const std::wstring& archive,
     const auto produced = files::family(staged);
     for (const auto& path : produced) workspace.adopt(path);
     if (cancel.load()) { result.outcome = Outcome::Cancelled; return result; }
-    if (produced.empty()) throw ArchiveError("压缩引擎没有生成结果");
+    if (produced.empty()) throw ArchiveError(diagnostic("压缩引擎没有生成结果"));
     std::vector<std::pair<fs::path, fs::path>> outputs;
     for (const auto& path : produced)
         outputs.push_back({path, target.parent_path() / path.filename()});
-    files::commitFamily(workspace, outputs, previous, expected);
+    try { files::commitFamily(workspace, outputs, previous, expected, {}, &cancel); }
+    catch (const OperationError&) { throw; }
+    catch (...) {
+        if (cancel.load() && !workspace.preserve) { result.outcome = Outcome::Cancelled; return result; }
+        throw;
+    }
     for (const auto& item : outputs) result.paths.push_back(item.second.wstring());
     result.completed = produced.size();
     result.overwritten = previous.size();
@@ -675,7 +697,7 @@ void SevenZipEngine::createRaw(const std::wstring& archive,
                             const CreateOptions& opt, const ProgressFn& onProgress,
                             const std::atomic_bool& cancel, const std::vector<std::wstring>& exclusions) const {
     ensure();
-    if (inputs.empty()) throw ArchiveError("没有指定要压缩的文件或目录");
+    if (inputs.empty()) throw ArchiveError(diagnostic("没有指定要压缩的文件或目录"));
 
     if (isTarWrappedExt(archive)) {
         // 两段式：先在临时目录打 tar，再套外层压缩（gzip/bzip2/xz/zstd）
@@ -689,6 +711,7 @@ void SevenZipEngine::createRaw(const std::wstring& archive,
         std::vector<std::wstring> a{ L"a", tmpTar, L"-ttar", L"-y" };
         for (const auto& exclusion : exclusions) a.push_back(L"-xr!" + exclusion);
         if (opt.threads > 0) a.push_back(L"-mmt" + std::to_wstring(opt.threads));
+        a.push_back(L"--");
         for (const auto& in : inputs) a.push_back(in);
 
         proc::RunResult r1 = proc::run(exe_, a,
@@ -696,7 +719,7 @@ void SevenZipEngine::createRaw(const std::wstring& archive,
         if (cancel.load()) { cleanup(); return; }
         if (r1.exitCode != 0) {
             cleanup();
-            std::string msg = "压缩失败 (打包 tar 阶段, exit " + std::to_string(r1.exitCode) + ")";
+            std::string msg = diagnostic("压缩失败 (打包 tar 阶段, exit ") + std::to_string(r1.exitCode) + ")";
             if (!r1.stderrTail.empty()) msg += "\n" + r1.stderrTail;
             throw ArchiveError(msg);
         }
@@ -707,7 +730,7 @@ void SevenZipEngine::createRaw(const std::wstring& archive,
                        : (e == L".tar.zst" || e == L".tzst") ? L"zstd" : L"gzip";
         try {
             runWithProgress({ L"a", archive, L"-t" + t, L"-y", tmpTar },
-                            onProgress, cancel, "压缩");
+                            onProgress, cancel, diagnostic("压缩"));
         } catch (...) { cleanup(); throw; }
         cleanup();
         return;
@@ -717,13 +740,13 @@ void SevenZipEngine::createRaw(const std::wstring& archive,
     const bool isSfx = (lowerExtOf(archive) == L".exe");
     if (type.empty() && isSfx) type = L"7z";   // .exe -> 7z 自解压包（-sfx）
     if (type.empty())
-        throw ArchiveError("不支持的压缩格式: " + utf8(archive) +
-                    "（当前支持 7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz / exe(SFX) 等）");
+        throw ArchiveError(diagnostic("不支持的压缩格式: ") + utf8(archive) +
+                    diagnostic("（当前支持 7z / zip / tar / gz / bz2 / xz / zst / tar.gz / tar.bz2 / tar.xz / exe(SFX) 等）"));
 
     // 单文件流格式（非 tar 包装）只支持单文件输入
     if ((type == L"gzip" || type == L"bzip2" || type == L"xz" || type == L"zstd") &&
         inputs.size() > 1)
-        throw ArchiveError(utf8(type) + " 格式只支持单个文件；多文件请使用 .tar.gz / .tar.xz 等，或 7z / zip。");
+        throw ArchiveError(utf8(type) + diagnostic(" 格式只支持单个文件；多文件请使用 .tar.gz / .tar.xz 等，或 7z / zip。"));
 
     std::vector<std::wstring> args{ L"a", archive, L"-t" + type, L"-y",
         L"-mx" + std::to_wstring(opt.level < 0 ? 5 : opt.level) };
@@ -735,8 +758,9 @@ void SevenZipEngine::createRaw(const std::wstring& archive,
         args.push_back(L"-p" + opt.password);
         if (type == L"7z") args.push_back(L"-mhe=on");
     }
+    args.push_back(L"--");
     for (const auto& in : inputs) args.push_back(in);
-    runWithProgress(std::move(args), onProgress, cancel, "压缩");
+    runWithProgress(std::move(args), onProgress, cancel, diagnostic("压缩"));
 }
 
 void SevenZipEngine::test(const std::wstring& archive, const std::wstring& password,
@@ -744,10 +768,12 @@ void SevenZipEngine::test(const std::wstring& archive, const std::wstring& passw
                           const std::atomic_bool& cancel) const {
     ensure();
     const std::wstring real = resolveFirstVolume(archive);
-    requireFile(real, "压缩包");
-    std::vector<std::wstring> args{ L"t", real, L"-y" };
+    requireFile(real, diagnostic("压缩包"));
+    std::vector<std::wstring> args{ L"t", L"-y" };
     if (!password.empty()) args.push_back(L"-p" + password);
-    runWithProgress(std::move(args), onProgress, cancel, "完整性测试");
+    args.push_back(L"--");
+    args.push_back(real);
+    runWithProgress(std::move(args), onProgress, cancel, diagnostic("完整性测试"));
 }
 
 } // namespace ggzip

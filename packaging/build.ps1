@@ -7,6 +7,8 @@ param(
     [string]$PackageName = '',
     [string]$IsccPath = '',
     [string]$RuntimeDir = '',
+    [string]$SignCertificateThumbprint = '',
+    [string]$SignToolPath = '',
     [switch]$SkipBuild,
     [switch]$RunShellTests
 )
@@ -14,6 +16,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
+if ([bool]$SignCertificateThumbprint -ne [bool]$SignToolPath) { throw 'Provide both signing certificate thumbprint and SignTool path.' }
 
 function Resolve-ProjectPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -107,6 +110,7 @@ try {
         Invoke-Native cmake @('--build', $ShellBuildDir, '--config', 'Release', '--parallel')
     }
     Invoke-Native ctest @('--test-dir', $BuildDir, '-C', 'Release', '--output-on-failure')
+    Invoke-Native ctest @('--test-dir', $ShellBuildDir, '-C', 'Release', '--output-on-failure')
     $shellDll = Join-Path $ShellBuildDir 'Release/ggzip_shell.dll'
     $cliExe = Join-Path $BuildDir 'cli/Release/ggz.exe'
     if ($RunShellTests) {
@@ -115,6 +119,9 @@ try {
         Invoke-Native $hostTest @($shellDll, $cliExe, '--e2e')
     }
     New-Item -ItemType Directory -Path $stage | Out-Null
+    $validationDir = Join-Path $stage 'packaging'
+    New-Item -ItemType Directory -Path $validationDir | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'VALIDATION.md'), (Join-Path $PSScriptRoot 'PERFORMANCE.md') -Destination $validationDir
     Copy-Item -LiteralPath (Join-Path $BuildDir 'gui/Release/ggzip_gui.exe') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $BuildDir 'gui/Release/ggzip_preview_worker.exe') -Destination $stage
     Copy-Item -LiteralPath $cliExe, $shellDll -Destination $stage
@@ -127,6 +134,9 @@ try {
         (Join-Path $PSScriptRoot 'PORTABLE.md'), (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') -Destination $stage
     $guiExe = Join-Path $stage 'ggzip_gui.exe'
     Invoke-Native $windeployqt @('--release', '--no-translations', '--no-compiler-runtime', $guiExe)
+    $translationDir = Join-Path $stage 'translations'
+    New-Item -ItemType Directory -Path $translationDir | Out-Null
+    Copy-Item -LiteralPath (Join-Path $QtDir 'translations/qtbase_zh_CN.qm') -Destination $translationDir
     Get-ChildItem -LiteralPath $RuntimeDir -Filter '*.dll' -File |
         Copy-Item -Destination $stage
     if (-not (Test-Path -LiteralPath (Join-Path $stage 'imageformats/qwebp.dll') -PathType Leaf)) {
@@ -153,6 +163,10 @@ try {
     $cliVersion = & (Join-Path $stage 'ggz.exe') --version
     if ($LASTEXITCODE -ne 0 -or $cliVersion -ne "ggz (ggZip) $version") {
         throw 'CLI version does not match VERSION.'
+    }
+    $englishHelp = & (Join-Path $stage 'ggz.exe') --lang en --help
+    if ($LASTEXITCODE -ne 0 -or $englishHelp -notcontains 'Usage:') {
+        throw 'Deployed CLI English help is unavailable.'
     }
     $qtVersion = & (Join-Path $QtDir 'bin/qmake.exe') -query QT_VERSION
     if ($LASTEXITCODE -ne 0 -or $qtVersion -notmatch '^\d+\.\d+\.\d+$') {
@@ -187,10 +201,19 @@ try {
         "7-Zip notices: licenses/7zip; corresponding source: sources/7zip.") |
         Set-Content -LiteralPath (Join-Path $stage 'BUILD_INFO.txt') -Encoding utf8
     & (Join-Path $PSScriptRoot 'test-bundle.ps1') -PackageDir $stage
+    if ($SignCertificateThumbprint) {
+        & (Join-Path $PSScriptRoot 'sign.ps1') -Files @($guiExe, (Join-Path $stage 'ggz.exe'),
+            (Join-Path $stage 'ggzip_preview_worker.exe'), (Join-Path $stage 'ggzip_shell.dll')) `
+            -CertificateThumbprint $SignCertificateThumbprint -SignToolPath $SignToolPath
+    }
     Compress-Archive -LiteralPath $stage -DestinationPath $zipPath -CompressionLevel Optimal
     Invoke-Native $IsccPath @("/DAppVersion=$version", "/DDistDir=$stage",
         "/DOutputDir=$OutputDir", "/DPackageName=$PackageName", (Join-Path $PSScriptRoot 'ggzip.iss'))
     if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) { throw 'Installer output was not produced.' }
+    if ($SignCertificateThumbprint) {
+        & (Join-Path $PSScriptRoot 'sign.ps1') -Files @($setupPath) `
+            -CertificateThumbprint $SignCertificateThumbprint -SignToolPath $SignToolPath
+    }
     $checksums = foreach ($file in @($zipPath, $setupPath)) {
         $hash = Get-FileHash -LiteralPath $file -Algorithm SHA256
         "$($hash.Hash.ToLowerInvariant())  $([System.IO.Path]::GetFileName($file))"

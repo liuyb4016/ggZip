@@ -7,6 +7,7 @@ namespace ggzip {
 class ConflictError : public ArchiveError {
 public:
     using ArchiveError::ArchiveError;
+    const char* code() const noexcept override { return "GGZIP_CONFLICT"; }
 };
 
 class OperationError : public ArchiveError {

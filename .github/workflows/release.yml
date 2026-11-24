@@ -47,10 +47,10 @@ jobs:
       - name: Verify package checksums
         working-directory: packages
         run: sha256sum --check *-SHA256SUMS.txt
-      - name: Publish stable release
+      - name: Publish unsigned test prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release create "$TAG" packages/*.zip packages/*-setup.exe packages/*-SHA256SUMS.txt \
-            --verify-tag --title "ggZip $TAG" --generate-notes
+            --verify-tag --title "ggZip $TAG (unsigned test build)" --generate-notes --prerelease

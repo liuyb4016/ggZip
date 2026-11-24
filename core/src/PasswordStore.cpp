@@ -1,5 +1,6 @@
 #include "ggzip/PasswordStore.h"
 #include "ggzip/ArchiveError.h"
+#include "ggzip/Diagnostics.h"
 #include "ggzip/Text.h"
 #include <windows.h>
 #include <wincrypt.h>
@@ -23,7 +24,7 @@ void putU32(std::string& s, std::uint32_t v) {
 }
 
 std::uint32_t getU32(const std::string& s, size_t& pos) {
-    if (pos + 4 > s.size()) throw ArchiveError("密码库文件格式损坏");
+    if (pos + 4 > s.size()) throw ArchiveError(diagnostic("密码库文件格式损坏"));
     std::uint32_t v = 0;
     for (int i = 0; i < 4; ++i)
         v |= (std::uint32_t)(unsigned char)s[pos + i] << (8 * i);
@@ -33,7 +34,7 @@ std::uint32_t getU32(const std::string& s, size_t& pos) {
 
 std::string getStr(const std::string& s, size_t& pos) {
     std::uint32_t n = getU32(s, pos);
-    if (pos + n > s.size()) throw ArchiveError("密码库文件格式损坏");
+    if (pos + n > s.size()) throw ArchiveError(diagnostic("密码库文件格式损坏"));
     std::string out = s.substr(pos, n);
     pos += n;
     return out;
@@ -76,7 +77,7 @@ std::vector<BYTE> dpapiProtect(const std::string& plain) {
     in.cbData = (DWORD)plain.size();
     DATA_BLOB out{};
     if (!CryptProtectData(&in, L"ggZip passwords", nullptr, nullptr, nullptr, 0, &out))
-        throw ArchiveError("DPAPI 加密失败 (Win32 错误码 " + std::to_string(GetLastError()) + ")");
+        throw ArchiveError(diagnostic("DPAPI 加密失败 (Win32 错误码 ") + std::to_string(GetLastError()) + ")");
     std::vector<BYTE> v(out.pbData, out.pbData + out.cbData);
     LocalFree(out.pbData);
     return v;
@@ -88,7 +89,7 @@ std::string dpapiUnprotect(const std::vector<BYTE>& blob) {
     in.pbData = (BYTE*)blob.data();
     DATA_BLOB out{};
     if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, 0, &out))
-        throw ArchiveError("密码库解密失败：可能由其他用户账户创建或文件已损坏");
+        throw ArchiveError(diagnostic("密码库解密失败：可能由其他用户账户创建或文件已损坏"));
     std::string s((char*)out.pbData, out.cbData);
     LocalFree(out.pbData);
     return s;
@@ -101,7 +102,7 @@ PasswordStore::PasswordStore(std::wstring baseDir) {
         std::wstring appdata;
         if (const wchar_t* env = _wgetenv(L"APPDATA"); env && *env) appdata = env;
         if (appdata.empty())
-            throw ArchiveError("无法定位 APPDATA 目录，密码库不可用");
+            throw ArchiveError(diagnostic("无法定位 APPDATA 目录，密码库不可用"));
         baseDir = appdata + L"\\" + kDirName;
     }
     dir_ = std::move(baseDir);
@@ -130,12 +131,12 @@ void PasswordStore::save(const std::vector<PasswordEntry>& entries) const {
     fs::create_directories(fs::path(dir_), ec);
     std::vector<BYTE> blob = dpapiProtect(serialize(entries));
     std::ofstream f(fs::path(storeFilePath()), std::ios::binary | std::ios::trunc);
-    if (!f) throw ArchiveError("无法写入密码库文件: " + utf8(storeFilePath()));
+    if (!f) throw ArchiveError(diagnostic("无法写入密码库文件: ") + utf8(storeFilePath()));
     f.write((const char*)blob.data(), (std::streamsize)blob.size());
 }
 
 void PasswordStore::add(const std::wstring& label, const std::wstring& password) const {
-    if (label.empty()) throw ArchiveError("密码条目标签不能为空");
+    if (label.empty()) throw ArchiveError(diagnostic("密码条目标签不能为空"));
     auto es = load();
     bool replaced = false;
     for (auto& e : es) {

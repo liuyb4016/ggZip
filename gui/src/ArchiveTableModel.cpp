@@ -54,7 +54,7 @@ bool ArchiveTableModel::hasEncryptedEntries() const {
 }
 
 QString ArchiveTableModel::displayPath() const {
-    return prefix_.isEmpty() ? QStringLiteral("(根目录)") : prefix_;
+    return prefix_.isEmpty() ? tr("(根目录)") : prefix_;
 }
 
 const ggzip::Entry* ArchiveTableModel::entryAt(int row) const {
@@ -125,7 +125,7 @@ QVariant ArchiveTableModel::data(const QModelIndex& index, int role) const {
         case 0: return QString::fromStdWString(e->path);
         case 1: return e->isDir ? QVariant() : ggzHumanSize(e->size);
         case 2: return e->isDir ? QVariant() : ggzHumanSize(e->packedSize);
-        case 3: return e->isDir ? QString("目录") : QString("文件");
+        case 3: return e->isDir ? tr("目录") : tr("文件");
     }
     return {};
 }
@@ -134,10 +134,10 @@ QVariant ArchiveTableModel::headerData(int section, Qt::Orientation orientation,
                                        int role) const {
     if (role != Qt::DisplayRole || orientation != Qt::Horizontal) return {};
     switch (section) {
-        case 0: return "名称";
-        case 1: return "大小";
-        case 2: return "压缩后";
-        case 3: return "类型";
+        case 0: return tr("名称");
+        case 1: return tr("大小");
+        case 2: return tr("压缩后");
+        case 3: return tr("类型");
     }
     return {};
 }

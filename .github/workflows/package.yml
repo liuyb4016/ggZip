@@ -57,6 +57,22 @@ jobs:
           if ($installers.Count -ne 1) { throw 'Expected exactly one installer.' }
           .\packaging\test-installer.ps1 -InstallerPath $installers[0].FullName
 
+      - name: Record bounded archive and image performance
+        shell: pwsh
+        run: |
+          .\packaging\test-performance.ps1 -BuildDir build-package -OutputDir out\performance-ci-gui `
+            -QtDir "$env:GITHUB_WORKSPACE\Qt\6.9.3\msvc2022_64" `
+            -LargeMiB 64 -SmallFiles 1000 -Iterations 2 -ImageDimension 4096
+
+      - name: Upload performance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ggzip-gui-performance
+          path: out/performance-ci-gui/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload Windows packages
         uses: actions/upload-artifact@v4
         with:

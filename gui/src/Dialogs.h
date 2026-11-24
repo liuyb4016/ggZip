@@ -8,7 +8,7 @@
 #include "ggzip/PasswordStore.h"
 
 // BOM / UTF-8 / 系统编码（GBK）自动识别（GUI 各处共用）
-QString ggzDecodeTextPreview(const QByteArray& raw);
+QString ggzDecodeTextPreview(const QByteArray& raw, bool truncated = false);
 
 class QCheckBox;
 class QComboBox;

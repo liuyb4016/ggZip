@@ -1,9 +1,12 @@
 #include "ProcessUtil.h"
 #include "ggzip/ArchiveError.h"
+#include "ggzip/Diagnostics.h"
 #include "ggzip/Text.h"
 #include <windows.h>
+#include <psapi.h>
 #include <exception>
 #include <thread>
+#include <algorithm>
 
 namespace ggzip::proc {
 namespace {
@@ -40,7 +43,7 @@ Pipe makePipe() {
     SECURITY_ATTRIBUTES sa{ sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
     Pipe p;
     if (!CreatePipe(&p.read, &p.write, &sa, 0))
-        throw ArchiveError("CreatePipe 失败");
+        throw ArchiveError(diagnostic("CreatePipe 失败"));
     return p;
 }
 
@@ -65,11 +68,16 @@ void readAll(HANDLE file, const std::function<bool(std::string_view)>& sink) {
 RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
               const std::function<bool(std::string_view chunk)>& onStdout,
               const std::atomic_bool& cancel, const RunOptions& options) {
+    if (exe.find(L'\0') != std::wstring::npos || options.inputFile.find(L'\0') != std::wstring::npos ||
+        options.workingDirectory.find(L'\0') != std::wstring::npos ||
+        std::any_of(args.begin(), args.end(), [](const auto& argument) { return argument.find(L'\0') != std::wstring::npos; }))
+        throw ArchiveError(diagnostic("进程参数包含非法空字符"));
     std::wstring cmdline = quoteArg(exe);
     for (const auto& a : args) {
         cmdline += L' ';
         cmdline += quoteArg(a);
     }
+    if (cmdline.size() >= 32767) throw ArchiveError(diagnostic("命令行超过 Windows 长度限制，请减少本次输入数量或缩短路径"));
 
     Pipe out = makePipe();
     Pipe err = makePipe();
@@ -81,7 +89,7 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
     if (stdinNul == INVALID_HANDLE_VALUE) {
         closeHandleSafe(out.read); closeHandleSafe(out.write);
         closeHandleSafe(err.read); closeHandleSafe(err.write);
-        throw ArchiveError("无法创建只读输入句柄");
+        throw ArchiveError(diagnostic("无法创建只读输入句柄"));
     }
     if (!options.inputFile.empty()) {
         BY_HANDLE_FILE_INFORMATION information{};
@@ -90,7 +98,7 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
             CloseHandle(stdinNul);
             closeHandleSafe(out.read); closeHandleSafe(out.write);
             closeHandleSafe(err.read); closeHandleSafe(err.write);
-            throw ArchiveError("辅助进程输入必须为普通文件");
+            throw ArchiveError(diagnostic("辅助进程输入必须为普通文件"));
         }
     }
     STARTUPINFOEXW startup{};
@@ -114,7 +122,7 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
         CloseHandle(stdinNul);
         closeHandleSafe(out.read); closeHandleSafe(out.write);
         closeHandleSafe(err.read); closeHandleSafe(err.write);
-        throw ArchiveError("无法设置辅助进程句柄隔离");
+        throw ArchiveError(diagnostic("无法设置辅助进程句柄隔离"));
     }
 
     std::vector<wchar_t> cmdbuf(cmdline.begin(), cmdline.end());
@@ -125,12 +133,14 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (options.memoryLimit) {
-        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY;
         limits.ProcessMemoryLimit = static_cast<SIZE_T>(options.memoryLimit);
+        limits.JobMemoryLimit = static_cast<SIZE_T>(options.memoryLimit);
     }
     const BOOL configured = job && SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
     BOOL ok = configured && CreateProcessW(nullptr, cmdbuf.data(), nullptr, nullptr, TRUE,
-        CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &si, &pi);
+        CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr,
+        options.workingDirectory.empty() ? nullptr : options.workingDirectory.c_str(), &si, &pi);
     DWORD createError = GetLastError();
     DeleteProcThreadAttributeList(startup.lpAttributeList);
     if (stdinNul) CloseHandle(stdinNul);
@@ -141,16 +151,26 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
         closeHandleSafe(job);
         closeHandleSafe(out.read);
         closeHandleSafe(err.read);
-        throw ArchiveError("无法启动进程: " + utf8(exe) + " (Win32 错误码 " +
+        throw ArchiveError(diagnostic("无法启动进程: ") + utf8(exe) + diagnostic(" (Win32 错误码 ") +
                     std::to_string(createError) + ")");
     }
     if (!AssignProcessToJobObject(job, pi.hProcess)) {
         TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
         closeHandleSafe(out.read); closeHandleSafe(err.read); closeHandleSafe(job);
-        throw ArchiveError("无法隔离辅助进程");
+        throw ArchiveError(diagnostic("无法隔离辅助进程"));
     }
+    const auto started = GetTickCount64();
     ResumeThread(pi.hThread);
+    RunMetrics metrics;
+    auto sampleWorkingSet = [&] {
+        if (!options.collectMetrics) return;
+        PROCESS_MEMORY_COUNTERS information{};
+        information.cb = sizeof(information);
+        if (GetProcessMemoryInfo(pi.hProcess, &information, sizeof(information)))
+            metrics.rootPeakWorkingSetBytes = std::max(metrics.rootPeakWorkingSetBytes,
+                static_cast<std::uint64_t>(information.PeakWorkingSetSize));
+    };
 
     std::string errAcc;
     std::atomic_bool stopRequested{ false };
@@ -185,9 +205,10 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
     std::exception_ptr monitorError;
     for (;;) {
         DWORD w = WaitForSingleObject(pi.hProcess, 50);
+        sampleWorkingSet();
         if (w == WAIT_OBJECT_0) break;
         try {
-            if (w == WAIT_FAILED) throw ArchiveError("等待辅助进程失败");
+            if (w == WAIT_FAILED) throw ArchiveError(diagnostic("等待辅助进程失败"));
             if (options.monitor) options.monitor();
         } catch (...) { monitorError = std::current_exception(); }
         timedOut = options.deadlineTick && GetTickCount64() >= options.deadlineTick;
@@ -199,6 +220,21 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
         }
     }
 
+    if (options.collectMetrics) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION memory{};
+        JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION accounting{};
+        metrics.available = QueryInformationJobObject(job, JobObjectExtendedLimitInformation,
+            &memory, sizeof(memory), nullptr) &&
+            QueryInformationJobObject(job, JobObjectBasicAndIoAccountingInformation,
+                &accounting, sizeof(accounting), nullptr);
+        metrics.elapsedMs = GetTickCount64() - started;
+        metrics.jobPeakCommitBytes = memory.PeakJobMemoryUsed;
+        metrics.cpuTimeMs = static_cast<std::uint64_t>(
+            accounting.BasicInfo.TotalUserTime.QuadPart + accounting.BasicInfo.TotalKernelTime.QuadPart) / 10000;
+        metrics.jobReadBytes = accounting.IoInfo.ReadTransferCount;
+        metrics.jobWriteBytes = accounting.IoInfo.WriteTransferCount;
+        metrics.jobProcessCount = accounting.BasicInfo.TotalProcesses;
+    }
     closeHandleSafe(job);
     tOut.join();
     tErr.join();
@@ -211,12 +247,13 @@ RunResult run(const std::wstring& exe, const std::vector<std::wstring>& args,
 
     if (pending) std::rethrow_exception(pending);
     if (monitorError) std::rethrow_exception(monitorError);
-    if (timedOut) throw ArchiveError("操作超时，辅助进程已停止");
+    if (timedOut) throw ArchiveError(diagnostic("操作超时，辅助进程已停止"));
 
     RunResult r;
     bool cancelled = cancel.load() || stopRequested.load();
     r.exitCode = cancelled ? -1 : (int)code;
     r.stderrTail = tailOf(errAcc, 8192);
+    r.metrics = metrics;
     return r;
 }
 

@@ -1,5 +1,8 @@
 #include "ggzip/SmartExtract.h"
 #include "ggzip/ArchiveError.h"
+#include "ggzip/OperationError.h"
+#include "ggzip/Diagnostics.h"
+#include "FileTransaction.h"
 #include <windows.h>
 #include <algorithm>
 #include <cwctype>
@@ -62,8 +65,7 @@ OperationSummary extractSmart(const IEngine& engine, const std::wstring& archive
 std::wstring dedupeFolderName(const std::wstring& parentDir,
                               const std::wstring& subfolderBase) {
     auto exists = [&parentDir](const std::wstring& name) {
-        DWORD a = GetFileAttributesW((parentDir + L"\\" + name).c_str());
-        return a != INVALID_FILE_ATTRIBUTES;
+        return files::identity(fs::path(parentDir) / name).exists;
     };
     std::wstring base = subfolderBase.empty() ? L"extracted" : subfolderBase;
     if (!exists(base)) return base;
@@ -71,7 +73,7 @@ std::wstring dedupeFolderName(const std::wstring& parentDir,
         std::wstring n = base + L"-" + std::to_wstring(i);
         if (!exists(n)) return n;
     }
-    return base;
+    throw ConflictError(diagnostic("无法生成唯一的解压目录名称"));
 }
 
 } // namespace ggzip

@@ -5,7 +5,9 @@
 #include "ggzip/SourceMark.h"
 #include <cstdio>
 #include <functional>
+#include <algorithm>
 #include <iterator>
+#include <sddl.h>
 
 namespace fs = std::filesystem;
 namespace {
@@ -21,7 +23,8 @@ bool throws(const std::function<void()>& action) {
     return false;
 }
 std::string bytes(const fs::path& path) {
-    std::ifstream input(path, std::ios::binary);
+    auto preferred = path;
+    std::ifstream input(preferred.make_preferred(), std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(input), {});
 }
 }
@@ -52,6 +55,14 @@ int wmain() {
         const auto replaced = engine->create(archive.wstring(), {input.wstring()}, option, {}, cancel);
         check(replaced.overwritten == 1 && bytes(archive) != oldArchive, "authorized replacement committed");
         const std::string goodArchive = bytes(archive);
+        {
+            const HANDLE held = CreateFileW(archive.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            check(held != INVALID_HANDLE_VALUE, "prepare occupied archive target");
+            check(throws([&] { engine->create(archive.wstring(), {input.wstring()}, option, {}, cancel); }) &&
+                  bytes(archive) == goodArchive, "occupied target prevents replacement without data loss");
+            if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        }
         check(throws([&] {
             engine->create(archive.wstring(), {(fixture.path / "absent.txt").wstring()}, option, {}, cancel);
         }) && bytes(archive) == goodArchive, "creation failure preserves original archive");
@@ -113,6 +124,20 @@ int wmain() {
         previewtest::zip(damaged, {{"broken.txt", "BROKEN", 0x81a40000, true}});
         check(throws([&] { engine->extract(damaged.wstring(), output.wstring(), {}, extraction, {}, cancel); }) &&
               !fs::exists(output / "broken.txt"), "CRC failure does not publish a damaged file");
+        const auto partlyDamaged = fixture.path / "partial-damage.zip";
+        previewtest::zip(partlyDamaged, {{"valid.txt", "VERIFIED"}, {"broken.txt", "BROKEN", 0x81a40000, true},
+                                      {"中文 文件.txt", "MUST NOT OVERWRITE"}});
+        const auto retainedBefore = bytes(existing);
+        check(throws([&] { engine->extract(partlyDamaged.wstring(), output.wstring(), {}, extraction, {}, cancel); }) &&
+              bytes(output / "valid.txt") == "VERIFIED" && bytes(existing) == retainedBefore,
+              "failed decoding salvages verified new files but never overwrites existing data");
+        const auto missingVolume = fixture.path / "missing-volume.7z";
+        ggzip::CreateOptions manyVolumes;
+        manyVolumes.volumeSize = L"64k";
+        engine->create(missingVolume.wstring(), {binary.wstring()}, manyVolumes, {}, cancel);
+        fs::remove(missingVolume.wstring() + L".002");
+        check(throws([&] { engine->extract(missingVolume.wstring(), (fixture.path / "missing-output").wstring(),
+              {}, {}, {}, cancel); }), "missing volume is a clear failure rather than successful partial extraction");
         const fs::path unsafe = fixture.path / "unsafe.zip";
         previewtest::zip(unsafe, {{"../escape.txt", "ESCAPE"}});
         check(throws([&] { engine->extract(unsafe.wstring(), output.wstring(), {}, extraction, {}, cancel); }) &&
@@ -159,11 +184,75 @@ int wmain() {
         previewtest::write(mixedOutput / "z-existing.txt", "KEEP");
         check(throws([&] { engine->extract(mixed.wstring(), mixedOutput.wstring(), {}, {}, {}, cancel); }) &&
               !fs::exists(mixedOutput / "a-new.txt"), "reject preflight publishes no earlier new files");
+        ggzip::ExtractOptions cancelAtConflict;
+        cancelAtConflict.conflict = ggzip::ConflictPolicy::Ask;
+        cancelAtConflict.resolveConflict = [&](const ggzip::Conflict&) {
+            cancel.store(true);
+            return ggzip::ConflictDecision{ggzip::ConflictPolicy::Skip, false};
+        };
+        const auto cancelledPublication = engine->extract(mixed.wstring(), mixedOutput.wstring(), {},
+            cancelAtConflict, {}, cancel);
+        check(cancelledPublication.outcome == ggzip::Outcome::Cancelled && cancelledPublication.completed == 1 &&
+              bytes(mixedOutput / "a-new.txt") == "NEW" && bytes(mixedOutput / "z-existing.txt") == "KEEP",
+              "cancellation keeps files already verified before the conflict but does not overwrite old data");
+        cancel.store(false);
+        const auto denied = fixture.path / "denied-output";
+        fs::create_directory(denied);
+        const auto protectedFile = denied / input.filename();
+        previewtest::write(protectedFile, "PERMISSION PROTECTED");
+        DWORD securityBytes = 0;
+        GetFileSecurityW(denied.c_str(), DACL_SECURITY_INFORMATION, nullptr, 0, &securityBytes);
+        std::vector<unsigned char> originalSecurity(securityBytes);
+        check(securityBytes && GetFileSecurityW(denied.c_str(), DACL_SECURITY_INFORMATION,
+              originalSecurity.data(), securityBytes, &securityBytes), "capture fixture directory permissions");
+        PSECURITY_DESCRIPTOR restricted = nullptr;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            L"D:(D;;0x00000156;;;WD)(A;;FA;;;OW)(A;;FA;;;SY)", SDDL_REVISION_1, &restricted, nullptr))
+            throw std::runtime_error("Unable to create test security descriptor");
+        const bool applied = SetFileSecurityW(denied.c_str(), DACL_SECURITY_INFORMATION, restricted) != 0;
+        LocalFree(restricted);
+        check(applied, "deny destination directory writes in an isolated fixture");
+        ggzip::ExtractOptions replaceProtected;
+        replaceProtected.conflict = ggzip::ConflictPolicy::Overwrite;
+        const bool failedWithoutMoving = throws([&] {
+            engine->extract(archive.wstring(), denied.wstring(), {}, replaceProtected, {}, cancel);
+        }) && fs::exists(protectedFile) && bytes(protectedFile) == "PERMISSION PROTECTED";
+        check(SetFileSecurityW(denied.c_str(), DACL_SECURITY_INFORMATION, originalSecurity.data()) != 0,
+              "restore isolated fixture permissions");
+        check(failedWithoutMoving, "permission failure is detected before moving an existing file");
         ggzip::applySourceZone(nested.wstring(), 3);
         const auto markedOutput = fixture.path / "marked-output";
         engine->extract(nested.wstring(), markedOutput.wstring(), {}, {}, {}, cancel);
         check(ggzip::sourceZone((markedOutput / "dir/sub/second.txt").wstring()) == 3,
               "download provenance is preserved on extracted files");
+        fs::path longOutput = fs::path(L"\\\\?\\" + fixture.path.wstring());
+        for (int index = 0; index < 12; ++index) longOutput /= L"long-directory-segment-1234567890";
+        engine->extract(nested.wstring(), longOutput.wstring(), {L"dir/sub/"}, {}, {}, cancel);
+        check(bytes(longOutput / "dir/sub/second.txt") == "SECOND" &&
+              ggzip::sourceZone((longOutput / "dir/sub/second.txt").wstring()) == 3,
+              "long output paths retain verified data and download provenance");
+        {
+            ggzip::files::Workspace workspace(fixture.path);
+            const auto freshFirst = workspace.write(L"first-fresh.txt", "FIRST");
+            const auto freshSecond = workspace.write(L"second-fresh.txt", "SECOND");
+            const auto firstTarget = fixture.path / "first-fresh-output.txt";
+            const auto secondTarget = fixture.path / "second-fresh-output.txt";
+            ggzip::files::commitFamily(workspace, {{freshFirst, firstTarget}, {freshSecond, secondTarget}}, {}, {});
+            check(bytes(firstTarget) == "FIRST" && bytes(secondTarget) == "SECOND" &&
+                  std::none_of(fs::directory_iterator(workspace.root), fs::directory_iterator{},
+                      [](const auto& item) { return item.path().filename().wstring().rfind(L"rollback-", 0) == 0; }) &&
+                  fs::exists(workspace.root / "commit.txt"),
+                  "fresh file families retain their recovery journal without allocating unused backup directories");
+            const auto retryFirst = workspace.write(L"retry-first.txt", "RETRY FIRST");
+            const auto retrySecond = workspace.write(L"retry-second.txt", "RETRY SECOND");
+            const auto retryTarget = fixture.path / "fresh-collision-output.txt";
+            const auto foreign = fixture.path / "fresh-foreign.txt";
+            previewtest::write(foreign, "FOREIGN");
+            check(throws([&] {
+                ggzip::files::commitFamily(workspace, {{retryFirst, retryTarget}, {retrySecond, foreign}}, {}, {});
+            }) && !fs::exists(retryTarget) && bytes(retryFirst) == "RETRY FIRST" && bytes(foreign) == "FOREIGN",
+                  "fresh-family collision still rolls back earlier publication without changing foreign data");
+        }
         const auto selfOutput = fixture.path / "self-output";
         fs::create_directory(selfOutput);
         previewtest::write(selfOutput / "data.txt", "PAYLOAD");

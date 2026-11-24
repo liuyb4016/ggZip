@@ -16,6 +16,7 @@
 ArchivePasswordDialog::ArchivePasswordDialog(const QString& archive, QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("压缩包密码"));
     password_ = new QLineEdit;
+    password_->setObjectName("archivePassword");
     password_->setEchoMode(QLineEdit::Password);
     auto* presets = new QComboBox;
     presets->addItem(tr("手动输入"));
@@ -61,6 +62,10 @@ QString ArchivePasswordDialog::password() const { return password_->text(); }
 PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("常用设置与预览资源限制"));
     QSettings settings;
+    auto* language = new QComboBox;
+    language->addItem("简体中文", "zh_CN");
+    language->addItem("English", "en");
+    language->setCurrentIndex(language->findData(settings.value("ui/language", "zh_CN")));
     auto* output = new QLineEdit(settings.value("paths/output").toString());
     auto* level = new QSpinBox;
     level->setRange(0, 9);
@@ -83,6 +88,7 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
         QMessageBox::information(this, tr("历史记录"), tr("最近打开历史已清除，密码库不受影响。"));
     });
     auto* form = new QFormLayout;
+    form->addRow(tr("语言（重启生效）:"), language);
     form->addRow(tr("常用输出目录:"), output);
     form->addRow(tr("默认压缩级别:"), level);
     form->addRow(tr("预览文件上限:"), bytes);
@@ -90,8 +96,9 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent) {
     form->addRow(tr("预览总超时:"), timeout);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(buttons, &QDialogButtonBox::accepted, this, [this, output, level, bytes, pixels, timeout] {
+    connect(buttons, &QDialogButtonBox::accepted, this, [this, output, level, bytes, pixels, timeout, language] {
         QSettings preferences;
+        preferences.setValue("ui/language", language->currentData());
         preferences.setValue("paths/output", output->text().trimmed());
         preferences.setValue("create/level", level->value());
         preferences.setValue("preview/maxBytes", static_cast<qulonglong>(bytes->value()) * 1024 * 1024);

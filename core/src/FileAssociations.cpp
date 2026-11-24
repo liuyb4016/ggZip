@@ -1,4 +1,5 @@
 #include "ggzip/FileAssociations.h"
+#include "ggzip/Diagnostics.h"
 #include <windows.h>
 #include <shlobj.h>
 #include <array>
@@ -30,7 +31,7 @@ struct RegistryKey {
 
 void requireSuccess(LSTATUS status) {
     if (status != ERROR_SUCCESS)
-        throw std::runtime_error("文件关联注册表操作失败，Windows 错误码 " +
+        throw std::runtime_error(diagnostic("文件关联注册表操作失败，Windows 错误码 ") +
                                  std::to_string(status));
 }
 
@@ -84,7 +85,7 @@ std::wstring normalizedPath(const std::wstring& applicationPath, bool mustExist)
     const std::filesystem::path path(applicationPath);
     if (applicationPath.empty() || applicationPath.find_first_of(L"\"\r\n") != std::wstring::npos ||
         !path.is_absolute() || (mustExist && !std::filesystem::is_regular_file(path)))
-        throw std::runtime_error("文件关联需要有效的 GUI 程序绝对路径");
+        throw std::runtime_error(diagnostic("文件关联需要有效的 GUI 程序绝对路径"));
     return path.lexically_normal().wstring();
 }
 

@@ -36,6 +36,9 @@ public:
               const ProgressFn& onProgress,
               const std::atomic_bool& cancel) const override;
 
+    OperationSummary edit(const std::wstring& archive, const EditOptions& opt,
+                          const ProgressFn& onProgress, const std::atomic_bool& cancel) const override;
+
 private:
     void createRaw(const std::wstring& archive, const std::vector<std::wstring>& inputs,
                    const CreateOptions& opt, const ProgressFn& onProgress,
@@ -43,7 +46,8 @@ private:
     void ensure() const;
     void runWithProgress(std::vector<std::wstring> args, const ProgressFn& onProgress,
                          const std::atomic_bool& cancel, const std::string& what,
-                         std::uint64_t deadline = 0, const std::function<void()>& monitor = {}) const;
+                         std::uint64_t deadline = 0, const std::function<void()>& monitor = {},
+                         const std::wstring& workingDirectory = {}) const;
     // 读取类操作的首卷解析：a.zip 不存在但 a.zip.001 存在 -> 返回 a.zip.001
     std::wstring resolveFirstVolume(const std::wstring& path) const;
 
