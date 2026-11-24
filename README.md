@@ -285,7 +285,10 @@ FAT/exFAT 等无 ACL 目标的操作会将完整快照和解码暂存放到当�
 `add` 支持文件/目录，默认保留输入的文件/目录名，GUI 添加到当前浏览目录。
 批量添加通过受控 UTF-8 列表一次更新，避免逐文件重写固实包；不会扫描进自己的操作目录或原包。
 程序声明长路径感知，不修改系统长路径策略；超长命令行会在启动引擎前明确拒绝。
-发布前验收步骤与失败恢复说明见 [验证清单](packaging/VALIDATION.md)。
+发布前验收步骤与失败恢复说明见 [验证清单](packaging/VALIDATION.md)；
+可勾选的发布执行步骤见 [发布执行清单](packaging/RELEASE_CHECKLIST.md)；
+打标签前先运行 `.\packaging\preflight-release.ps1` 做本地预检；
+产物生成后运行 `.\packaging\verify-artifacts.ps1` 校验 SHA256 与关键文件。
 有预算的大文件、小文件和图片测量及报告字段说明见 [性能测量](packaging/PERFORMANCE.md)；
 进程组内的内存拒绝测试不等于整机低内存或断电验收。
 

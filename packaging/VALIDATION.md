@@ -1,5 +1,9 @@
 # 发布前验证与恢复清单
 
+执行步骤的可勾选聚合见 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)，
+打标签前的本地预检运行 `.\packaging\preflight-release.ps1`，
+产物生成后的本地校验运行 `.\packaging\verify-artifacts.ps1`。
+
 当前本地功能实现和测试通过不等于真实 Windows 桌面验收通过。
 远端 CI 应对应当前待发布提交，不能使用旧基线的成功记录替代。
 以下人工项目均需在隔离 Win10 1809+ / Win11 x64 环境记录版本、场景和结果。
